@@ -1,0 +1,161 @@
+{
+    "_docs": {
+        "_about":   "All user-facing bot messages in one place. Edit the strings here — no JavaScript knowledge needed.",
+        "_templates": "Messages that contain {placeholder} tokens are dynamic. The placeholder is replaced at runtime by messages.js. Example: 'Hello {user}!' with user='@Alice' → 'Hello @Alice!'",
+        "_sections": {
+            "TICKET_PANEL_*":         "Strings used to build the ticket category selection embed and dropdown.",
+            "TICKET_WELCOME":         "First message posted inside a newly opened ticket channel.",
+            "TICKET_*":               "All other ticket system feedback messages.",
+            "BAN / KICK / MUTE / …":  "DM titles & bodies sent to the punished user, plus log embed titles and staff-facing success messages.",
+            "APPLICATION_PANEL_*":    "Strings for the application selection embed.",
+            "APPLICATION_CONFIRM_*":  "Confirmation DM sent before questions begin.",
+            "APPLICATION_*":          "All other application flow messages.",
+            "PROMOTE / DEMOTE":       "Promotion log embeds and staff reply text.",
+            "REPORT_*":               "Report system messages.",
+            "GENERIC_*":              "Fallback error messages used when no specific message fits."
+        }
+    },
+
+    "TICKET_PANEL_TITLE":       "🎫 Support Tickets",
+    "TICKET_PANEL_DESCRIPTION": "Select a category below to open a support ticket.\nPick the one that best fits your issue.",
+    "TICKET_PANEL_PLACEHOLDER": "Choose a category...",
+
+    "TICKET_WELCOME":           "Hey {user}! Staff will be with you shortly.\n\nDescribe your issue and include as much detail as you can.\n\n*Ticket ID: #{ticketId}*",
+    "TICKET_CREATED":           "Your ticket is open: {channel}",
+    "TICKET_NOT_FOUND":         "This channel isn't a ticket.",
+    "TICKET_BANNED":            "You're not allowed to open tickets.",
+    "TICKET_ALREADY_BANNED":    "That user is already ticket-banned.",
+    "TICKET_NOT_BANNED":        "That user doesn't have a ticket ban.",
+    "TICKET_BAN_SUCCESS":       "{user} can no longer open tickets.",
+    "TICKET_UNBAN_SUCCESS":     "{user} can now open tickets again.",
+    "TICKET_ADD_SUCCESS":       "{user} has been added to this ticket.",
+    "TICKET_REMOVE_SUCCESS":    "{user} has been removed from this ticket.",
+    "TICKET_CLOSED":            "Ticket {channel} has been closed.",
+
+    "TICKET_CLOSE_REQUEST_TITLE":           "🔒 Close Request",
+    "TICKET_CLOSE_REQUEST_BODY":            "A staff member has requested to close this ticket. Confirm below if you're okay with that.",
+    "TICKET_CLOSE_REQUEST_SENT":            "Close request sent in {channel}.",
+    "TICKET_CLOSE_REQUEST_CANCELLED_TITLE": "Close Request Cancelled",
+    "TICKET_CLOSE_REQUEST_CANCELLED_BODY":  "The close request was cancelled.",
+
+    "TICKET_TRANSCRIPT_TITLE":    "📄 Ticket Transcript",
+    "TICKET_TRANSCRIPT_DM_TITLE": "Ticket Closed",
+    "TICKET_TRANSCRIPT_DM_BODY":  "Your ticket in **{guildName}** has been closed. A transcript is attached below.",
+
+    "CLOSE_BUTTON_LABEL":         "Close Ticket",
+    "CONFIRM_CLOSE_BUTTON_LABEL": "Confirm",
+    "CANCEL_CLOSE_BUTTON_LABEL":  "Cancel",
+
+    "BAN_DM_TITLE":     "🔨 You've been banned",
+    "BAN_DM_BODY":      "You were banned from **{guildName}**.",
+    "BAN_LOG_TITLE":    "🔨 User Banned",
+    "BAN_SUCCESS_BODY": "{user} has been banned.\n**Reason:** {reason}\n**Duration:** {duration}\n**Messages cleared:** {delMessages}",
+
+    "UNBAN_DM_TITLE":     "🔓 You've been unbanned",
+    "UNBAN_DM_BODY":      "You were unbanned from **{guildName}**.",
+    "UNBAN_LOG_TITLE":    "🔓 User Unbanned",
+    "UNBAN_SUCCESS_BODY": "{username} has been unbanned.\n**Reason:** {reason}",
+    "UNBAN_INVALID_USER": "Couldn't find that user ID.",
+
+    "KICK_DM_TITLE":     "👢 You've been kicked",
+    "KICK_DM_BODY":      "You were kicked from **{guildName}**.",
+    "KICK_LOG_TITLE":    "👢 User Kicked",
+    "KICK_SUCCESS_BODY": "{user} has been kicked.\n**Reason:** {reason}",
+
+    "MUTE_DM_TITLE":     "🔇 You've been muted",
+    "MUTE_DM_BODY":      "You were muted in **{guildName}**.",
+    "MUTE_LOG_TITLE":    "🔇 User Muted",
+    "MUTE_SUCCESS_BODY": "{user} has been muted.\n**Reason:** {reason}\n**Duration:** {duration}",
+
+    "UNMUTE_DM_TITLE":     "🔊 You've been unmuted",
+    "UNMUTE_DM_BODY":      "Your mute in **{guildName}** has been lifted.",
+    "UNMUTE_LOG_TITLE":    "🔊 User Unmuted",
+    "UNMUTE_SUCCESS_BODY": "{user} has been unmuted.",
+
+    "CANNOT_BAN_SELF":       "You can't ban yourself.",
+    "CANNOT_BAN_BOT":        "You can't ban a bot.",
+    "CANNOT_KICK_SELF":      "You can't kick yourself.",
+    "CANNOT_KICK_BOT":       "You can't kick a bot.",
+    "CANNOT_MUTE_SELF":      "You can't mute yourself.",
+    "CANNOT_MUTE_BOT":       "You can't mute a bot.",
+    "ALREADY_MUTED":         "That user is already muted.",
+    "NOT_MUTED":             "That user isn't muted.",
+    "INVALID_MUTE_DURATION": "Invalid duration. Use formats like `10m`, `1h`, or `7d` (max 28 days).",
+
+    "NO_PERMISSION_BAN":         "You don't have permission to ban members.",
+    "NO_PERMISSION_KICK":        "You don't have permission to kick members.",
+    "NO_PERMISSION_MUTE":        "You don't have permission to mute members.",
+    "NO_PERMISSION_MANAGE":      "You don't have permission to use this command.",
+    "NO_PERMISSION_STAFF":       "This command is for staff only.",
+    "NO_PERMISSION_HIGHER_ROLE": "You can't take action on someone with a higher or equal role.",
+    "BOT_NO_PERMISSION":         "I don't have permission to do that.",
+
+    "APPLICATION_PANEL_TITLE":       "Applications",
+    "APPLICATION_PANEL_DESCRIPTION": "**Open positions:**\n- Trainee\n- Builder\n- Developer\n- Media\n- Beta Tester\n\nHave questions? Open a support ticket.",
+    "APPLICATION_PANEL_PLACEHOLDER": "Select a position...",
+    "APPLICATION_PANEL_FOOTER":      "Pick a role to start your application.",
+
+    "APPLICATION_ALREADY_OPEN":    "You already have an application in progress. Finish or cancel it before starting a new one.",
+    "APPLICATION_ROLE_CONFLICT":   "You already have the role for this position.",
+    "APPLICATION_DM_BLOCKED":      "I couldn't send you a DM. Make sure your DMs are open and try again.",
+    "APPLICATION_STARTED_TITLE":   "Application Started",
+    "APPLICATION_STARTED_BODY":    "Check your DMs to continue your application.",
+    "APPLICATION_OPEN_DMS_BUTTON": "Open DMs",
+
+    "APPLICATION_CONFIRM_BODY":         "You're about to apply for **{category}**.\n\nI'll send you a series of questions — you have **3 hours** to complete them. You can cancel at any time.",
+    "APPLICATION_CONFIRM_BUILDER_NOTE": "\n> **Note:** The Builder role is fully voluntary. Builders have no extra permissions and the work is unpaid.",
+    "APPLICATION_CONFIRM_DEV_NOTE":     "\n> **Note:** The Developer role is fully voluntary. All submissions require full source code and the work is unpaid.",
+
+    "APPLICATION_IN_PROGRESS_TITLE": "Application in Progress",
+    "APPLICATION_IN_PROGRESS_BODY":  "You have **3 hours** to complete this application. Hit cancel at any time to stop.",
+
+    "APPLICATION_SUMMARY_TITLE":    "📋 Summary — {category}",
+    "APPLICATION_SUMMARY_BODY":     "Review your answers below. Edit anything before submitting.",
+    "APPLICATION_SUMMARY_FOOTER":   "Take your time — you can edit any answer before submitting.",
+    "APPLICATION_ANSWER_UPDATED":   "Answer to question {n} updated.",
+    "APPLICATION_UPDATED_FALLBACK": "Couldn't update the summary. Here's your updated application:",
+
+    "APPLICATION_SUBMITTED_TITLE": "Application Submitted",
+    "APPLICATION_SUBMITTED_BODY":  "We've got your application. Staff will review it and get back to you.",
+
+    "APPLICATION_CANCELLED_TITLE": "Application Cancelled",
+    "APPLICATION_CANCELLED_BODY":  "Your application has been cancelled.",
+    "APPLICATION_TIMEOUT_TITLE":   "Application Expired",
+    "APPLICATION_TIMEOUT_BODY":    "Your application timed out after 3 hours. Feel free to start a new one whenever you're ready.",
+
+    "APPLICATION_ACCEPTED_TITLE":       "Application Accepted",
+    "APPLICATION_ACCEPTED_BODY":        "Your **{category}** application was accepted! You've been given the role.",
+    "APPLICATION_ACCEPTED_REASON_BODY": "Your **{category}** application was accepted!\n\n**Note from staff:** {reason}",
+    "APPLICATION_DENIED_TITLE":         "Application Denied",
+    "APPLICATION_DENIED_BODY":          "Your **{category}** application wasn't accepted this time.",
+    "APPLICATION_DENIED_REASON_BODY":   "Your **{category}** application wasn't accepted this time.\n\n**Reason:** {reason}",
+
+    "APPLICATION_PROMOTION_LOG":        "{user} was promoted to **{category}** via application.",
+    "APPLICATION_ACCEPT_STAFF_CONFIRM": "Application accepted — role assigned to {tag}.",
+    "APPLICATION_DENY_STAFF_CONFIRM":   "Application denied for {tag}.",
+
+    "APPLICATION_NOT_FOUND":        "Couldn't find that application.",
+    "APPLICATION_SESSION_EXPIRED":  "Your session expired. Please start a new application.",
+    "APPLICATION_INVALID_QUESTION": "That's not a valid question number. Enter a number between 1 and {max}.",
+    "APPLICATION_NO_MANAGEMENT":    "You don't have permission to review applications.",
+
+    "PROMOTE_LOG_DESCRIPTION": "{user} was promoted to **{rank}**.",
+    "PROMOTE_LOG_FOOTER":      "Congrats on the new rank!",
+    "PROMOTE_SUCCESS":         "{user} promoted to **{rank}**.",
+
+    "DEMOTE_LOG_DESCRIPTION":  "{user} was demoted to **{rank}**.",
+    "DEMOTE_LOG_FOOTER":       "Good luck in the future.",
+    "DEMOTE_SUCCESS":          "{user} demoted to **{rank}**.",
+
+    "CLEAR_SUCCESS": "Messages cleared.",
+
+    "REPORT_CANCELLED_TITLE": "Report Dismissed",
+    "REPORT_CANCELLED_BODY":  "Report against **{tag}** was dismissed.",
+    "REPORT_BAN_SUCCESS":     "{user} can no longer submit reports.",
+    "REPORT_UNBAN_SUCCESS":   "{user} can now submit reports again.",
+    "REPORT_BANNED":          "You're not allowed to submit reports.",
+    "REPORT_NO_STAFF":        "You need a staff role to handle reports.",
+
+    "GENERIC_ERROR":    "Something went wrong. Please try again.",
+    "GENERIC_DB_ERROR": "A database error occurred. Please try again."
+}
