@@ -20,7 +20,7 @@ class ApplicationHandler {
 
     initializeQuestions() {
         return {
-            'Trainee': [
+            'Helper': [
                 "What is your Ingame-Minecraft-Name?",
                 "How old are you?",
                 "In which time-zone do you live?",
@@ -121,7 +121,7 @@ class ApplicationHandler {
             .addOptions([
                 { label: 'Builders', value: 'Builder' },
                 { label: 'Media', value: 'Media' },
-                { label: 'Trainees', value: 'Trainee' },
+                { label: 'Helper', value: 'Helper' },
                 { label: 'Beta Testers', value: 'Beta-Tester' },
                 { label: 'Developers', value: 'Developer' }
             ]);

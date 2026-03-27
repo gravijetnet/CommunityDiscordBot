@@ -302,12 +302,12 @@ module.exports = {
                 { name: 'Famous', value: 'Famous' },
                 { name: 'Partner', value: 'Partner' },
                 { name: 'Builder', value: 'Builder' },
-                { name: 'Trainee', value: 'Trainee' },
-                { name: 'Moderator', value: 'Moderator' },
-                { name: 'SrModerator', value: 'SrModerator' },
+                { name: 'Helper', value: 'Helper' },
+                { name: 'Mod', value: 'Mod' },
+                { name: 'SrMod', value: 'SrMod' },
                 { name: 'Admin', value: 'Admin' },
                 { name: 'Developer', value: 'Developer' },
-                { name: 'SrAdmin', value: 'SrAdmin' }
+                { name: 'Owner', value: 'Owner' }
             ]
         }
     ]
@@ -333,12 +333,12 @@ module.exports = {
                             { name: 'Famous', value: 'Famous' },
                             { name: 'Partner', value: 'Partner' },
                             { name: 'Builder', value: 'Builder' },
-                            { name: 'Trainee', value: 'Trainee' },
-                            { name: 'Moderator', value: 'Moderator' },
-                            { name: 'SrModerator', value: 'SrModerator' },
+                            { name: 'Helper', value: 'Helper' },
+                            { name: 'Mod', value: 'Mod' },
+                            { name: 'SrMod', value: 'SrMod' },
                             { name: 'Admin', value: 'Admin' },
                             { name: 'Developer', value: 'Developer' },
-                            { name: 'SrAdmin', value: 'SrAdmin' }
+                            { name: 'Owner', value: 'Owner' }
                         ]
                     }
                 ]

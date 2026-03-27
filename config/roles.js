@@ -1,24 +1,24 @@
 module.exports = {
     STAFF_ROLE: '000000000000000000',
     MANAGEMENT_ROLE: '000000000000000000',
-    
+
     RANK_ROLES: {
         'Creator': '000000000000000000',
         'Media': '000000000000000000',
         'Famous': '000000000000000000',
         'Partner': '000000000000000000',
         'Builder': '000000000000000000',
-        'Trainee': '000000000000000000',
-        'Moderator': '000000000000000000',
-        'SrModerator': '000000000000000000',
+        'Helper': '000000000000000000',
+        'Mod': '000000000000000000',
+        'SrMod': '000000000000000000',
         'Developer': '000000000000000000',
         'Admin': '000000000000000000',
-        'SrAdmin': '000000000000000000',
+        'Owner': '000000000000000000',
         'Beta-Tester': '000000000000000000'
     },
 
     FORBIDDEN_ROLES: {
-        'Trainee': '000000000000000000',
+        'Helper': '000000000000000000',
         'Builder': '000000000000000000',
         'Developer': '000000000000000000',
         'Media': '000000000000000000',
@@ -31,14 +31,14 @@ module.exports = {
         'Famous': ['Creator', 'Media', 'Famous'],
         'Partner': ['Creator', 'Media', 'Famous', 'Partner'],
         'Builder': ['Builder'],
-        'Trainee': ['Trainee'],
-        'Moderator': ['Moderator'],
-        'SrModerator': ['SrModerator'],
+        'Helper': ['Helper'],
+        'Mod': ['Mod'],
+        'SrMod': ['SrMod'],
         'Admin': ['Admin'],
         'Developer': ['Developer'],
-        'SrAdmin': ['SrAdmin'],
+        'Owner': ['Owner'],
         'Beta-Tester': ['Beta-Tester']
     },
 
-    STAFF_RANKS: ['Trainee', 'Moderator', 'SrModerator', 'Admin', 'Developer', 'SrAdmin']
+    STAFF_RANKS: ['Helper', 'Mod', 'SrMod', 'Admin', 'Developer', 'Owner']
 };
