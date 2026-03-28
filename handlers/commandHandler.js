@@ -299,17 +299,17 @@ module.exports = {
             description: 'The rank to promote to',
             required: true,
             choices: [
-                { name: 'Creator', value: 'Creator' },
-                { name: 'Media', value: 'Media' },
-                { name: 'Famous', value: 'Famous' },
-                { name: 'Partner', value: 'Partner' },
-                { name: 'Builder', value: 'Builder' },
-                { name: 'Trainee', value: 'Trainee' },
-                { name: 'Moderator', value: 'Moderator' },
-                { name: 'SrModerator', value: 'SrModerator' },
-                { name: 'Admin', value: 'Admin' },
-                { name: 'Developer', value: 'Developer' },
-                { name: 'SrAdmin', value: 'SrAdmin' }
+                { name: 'Creator',       value: 'Creator' },
+                { name: 'Media',         value: 'Media' },
+                { name: 'Famous',        value: 'Famous' },
+                { name: 'Partner',       value: 'Partner' },
+                { name: 'Builder',       value: 'Builder' },
+                { name: 'Helper',        value: 'Helper' },
+                { name: 'Moderator',     value: 'Mod' },
+                { name: 'Sr. Moderator', value: 'SrMod' },
+                { name: 'Admin',         value: 'Admin' },
+                { name: 'Developer',     value: 'Dev' },
+                { name: 'Beta-Tester',   value: 'Beta-Tester' }
             ]
         }
     ]
@@ -330,17 +330,17 @@ module.exports = {
                         description: 'The rank to demote to (optional, defaults to Member)',
                         required: false,
                         choices: [
-                            { name: 'Creator', value: 'Creator' },
-                            { name: 'Media', value: 'Media' },
-                            { name: 'Famous', value: 'Famous' },
-                            { name: 'Partner', value: 'Partner' },
-                            { name: 'Builder', value: 'Builder' },
-                            { name: 'Trainee', value: 'Trainee' },
-                            { name: 'Moderator', value: 'Moderator' },
-                            { name: 'SrModerator', value: 'SrModerator' },
-                            { name: 'Admin', value: 'Admin' },
-                            { name: 'Developer', value: 'Developer' },
-                            { name: 'SrAdmin', value: 'SrAdmin' }
+                            { name: 'Creator',       value: 'Creator' },
+                            { name: 'Media',         value: 'Media' },
+                            { name: 'Famous',        value: 'Famous' },
+                            { name: 'Partner',       value: 'Partner' },
+                            { name: 'Builder',       value: 'Builder' },
+                            { name: 'Helper',        value: 'Helper' },
+                            { name: 'Moderator',     value: 'Mod' },
+                            { name: 'Sr. Moderator', value: 'SrMod' },
+                            { name: 'Admin',         value: 'Admin' },
+                            { name: 'Developer',     value: 'Dev' },
+                            { name: 'Beta-Tester',   value: 'Beta-Tester' }
                         ]
                     }
                 ]
@@ -1842,7 +1842,7 @@ async function handleReportCommand(interaction, options, bot) {
 
         const banButton = new ButtonBuilder()
             .setCustomId(`report_ban_${user.id}_${interaction.user.id}`)
-            .setLabel('Ban (30 days)')
+            .setLabel('Ban')
             .setStyle(ButtonStyle.Danger);
 
         const muteButton = new ButtonBuilder()

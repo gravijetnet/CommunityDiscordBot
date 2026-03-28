@@ -96,7 +96,6 @@
     "APPLICATION_PANEL_FOOTER":      "Pick a role to start your application.",
 
     "APPLICATION_ALREADY_OPEN":    "You already have an application in progress. Finish or cancel it before starting a new one.",
-    "APPLICATION_ROLE_CONFLICT":   "You already have the role for this position.",
     "APPLICATION_DM_BLOCKED":      "I couldn't send you a DM. Make sure your DMs are open and try again.",
     "APPLICATION_STARTED_TITLE":   "Application Started",
     "APPLICATION_STARTED_BODY":    "Check your DMs to continue your application.",

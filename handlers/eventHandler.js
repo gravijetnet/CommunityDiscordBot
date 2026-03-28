@@ -153,7 +153,6 @@ function formatDuration(ms) {
 async function logMessageDelete(message, bot) {
     // Partial (uncached) messages don't have author/content — skip silently
     if (message.partial || !message.author) return;
-    if (message.author.bot) return;
 
     const isMonitored = message.channel.parentId === bot.CONFIG.MONITORED_CATEGORY;
 
@@ -258,7 +257,7 @@ async function logMessageUpdate(oldMessage, newMessage, bot) {
     if (newMessage.partial) {
         try { newMessage = await newMessage.fetch(); } catch { return; }
     }
-    if (!oldMessage.author || oldMessage.author.bot) return;
+    if (!oldMessage.author) return;
     if (oldMessage.content === newMessage.content) return;
 
     const embed = new EmbedBuilder()
@@ -781,7 +780,7 @@ async function logMemberRoleChange(oldMember, newMember, bot) {
 
 async function logVoiceUpdate(oldState, newState, bot) {
     const member = newState.member ?? oldState.member;
-    if (!member || member.user.bot) return;
+    if (!member) return;
 
     const changes = [];
     let title = 'Voice Activity';
@@ -1089,7 +1088,6 @@ async function logThreadUpdate(oldThread, newThread, bot) {
 // ── Reaction logs ─────────────────────────────────────────────────────────────
 
 async function logReactionAdd(reaction, user, bot) {
-    if (user.bot) return;
     if (reaction.partial) {
         try { reaction = await reaction.fetch(); } catch { return; }
     }
@@ -1119,7 +1117,6 @@ async function logReactionAdd(reaction, user, bot) {
 }
 
 async function logReactionRemove(reaction, user, bot) {
-    if (user.bot) return;
     if (reaction.partial) {
         try { reaction = await reaction.fetch(); } catch { return; }
     }
@@ -1145,6 +1142,125 @@ async function logReactionRemove(reaction, user, bot) {
         .setFooter({ text: `Message ID: ${reaction.message.id}` });
 
     const logChannel = await getLogChannel(bot, bot.CONFIG.MESSAGE_LOG_CHANNEL);
+    if (logChannel) await logChannel.send({ embeds: [embed] });
+}
+
+// ── Message Create log ────────────────────────────────────────────────────────
+
+async function logMessageCreate(message, bot) {
+    // Never log the bot's own messages — would create an infinite logging loop
+    if (message.author.id === bot.client.user.id) return;
+
+    const embed = new EmbedBuilder()
+        .setTitle('Message Sent')
+        .setColor(0x57F287)
+        .setThumbnail(message.author.displayAvatarURL({ dynamic: true }))
+        .setTimestamp()
+        .addFields(
+            { name: 'Author',  value: `${message.author} (${message.author.tag})\n\`${message.author.id}\``, inline: true },
+            { name: 'Channel', value: `${message.channel}\n\`${message.channel.name}\``,                      inline: true },
+            { name: 'Jump',    value: `[Click here](${message.url})`,                                          inline: true }
+        )
+        .setFooter({ text: `Message ID: ${message.id}` });
+
+    if (message.content) {
+        const preview = message.content.length > 1024
+            ? message.content.substring(0, 1020) + '…'
+            : message.content;
+        embed.addFields({ name: `Content (${message.content.length} chars)`, value: preview, inline: false });
+    }
+
+    if (message.attachments.size > 0) {
+        const list = message.attachments.map(a => `[${a.name}](${a.url})`).join('\n');
+        embed.addFields({ name: `Attachments (${message.attachments.size})`, value: list.substring(0, 1024), inline: false });
+    }
+
+    if (message.embeds.length > 0) {
+        embed.addFields({ name: `Embeds`, value: `${message.embeds.length} embed(s)`, inline: true });
+    }
+
+    if (message.stickers.size > 0) {
+        embed.addFields({ name: 'Stickers', value: message.stickers.map(s => s.name).join(', '), inline: true });
+    }
+
+    const logChannel = await getLogChannel(bot, bot.CONFIG.MESSAGE_LOG_CHANNEL);
+    if (logChannel) await logChannel.send({ embeds: [embed] });
+}
+
+// ── Reaction remove-all / remove-emoji logs ───────────────────────────────────
+
+async function logReactionRemoveAll(message, reactions, bot) {
+    if (message.partial) {
+        try { message = await message.fetch(); } catch { return; }
+    }
+
+    const embed = new EmbedBuilder()
+        .setTitle('All Reactions Cleared')
+        .setColor(0xED4245)
+        .setTimestamp()
+        .addFields(
+            { name: 'Channel', value: `${message.channel}\n\`${message.channel.name}\``,   inline: true },
+            { name: 'Message', value: `[Jump to message](${message.url})`,                  inline: true },
+            { name: 'Removed', value: `${reactions.size} reaction type(s)`,                 inline: true }
+        )
+        .setFooter({ text: `Message ID: ${message.id}` });
+
+    const logChannel = await getLogChannel(bot, bot.CONFIG.MESSAGE_LOG_CHANNEL);
+    if (logChannel) await logChannel.send({ embeds: [embed] });
+}
+
+async function logReactionRemoveEmoji(reaction, bot) {
+    if (reaction.message.partial) {
+        try { await reaction.message.fetch(); } catch { return; }
+    }
+
+    const emoji = reaction.emoji.id
+        ? `<${reaction.emoji.animated ? 'a' : ''}:${reaction.emoji.name}:${reaction.emoji.id}>`
+        : reaction.emoji.name;
+
+    const embed = new EmbedBuilder()
+        .setTitle('Emoji Reactions Cleared')
+        .setColor(0xED4245)
+        .setTimestamp()
+        .addFields(
+            { name: 'Emoji',   value: emoji,                                                 inline: true },
+            { name: 'Channel', value: `${reaction.message.channel}`,                         inline: true },
+            { name: 'Message', value: `[Jump to message](${reaction.message.url})`,          inline: true }
+        )
+        .setFooter({ text: `Message ID: ${reaction.message.id}` });
+
+    const logChannel = await getLogChannel(bot, bot.CONFIG.MESSAGE_LOG_CHANNEL);
+    if (logChannel) await logChannel.send({ embeds: [embed] });
+}
+
+// ── Thread member logs ────────────────────────────────────────────────────────
+
+async function logThreadMembersUpdate(addedMembers, removedMembers, thread, bot) {
+    if (!addedMembers.size && !removedMembers.size) return;
+
+    const embed = new EmbedBuilder()
+        .setTitle('Thread Members Updated')
+        .setColor(addedMembers.size > 0 ? 0x57F287 : 0xED4245)
+        .setTimestamp()
+        .addFields({ name: 'Thread', value: `${thread} \`${thread.name}\``, inline: true })
+        .setFooter({ text: `Thread ID: ${thread.id}` });
+
+    if (addedMembers.size > 0) {
+        embed.addFields({
+            name: `Joined (${addedMembers.size})`,
+            value: addedMembers.map(m => `<@${m.id}> \`${m.id}\``).join('\n').substring(0, 1024),
+            inline: false
+        });
+    }
+    if (removedMembers.size > 0) {
+        embed.addFields({
+            name: `Left (${removedMembers.size})`,
+            value: removedMembers.map(m => `<@${m.id}> \`${m.id}\``).join('\n').substring(0, 1024),
+            inline: false
+        });
+    }
+
+    const logChannel = await getLogChannel(bot, bot.CONFIG.CHANNEL_LOG_CHANNEL);
     if (logChannel) await logChannel.send({ embeds: [embed] });
 }
 
@@ -1402,6 +1518,10 @@ function registerEventHandlers(bot) {
             ['USER_LOG_CHANNEL',            bot.CONFIG.USER_LOG_CHANNEL],
             ['WELCOME_CHANNEL',             bot.CONFIG.WELCOME_CHANNEL],
             ['TRANSCRIPT_CHANNEL',          bot.CONFIG.TRANSCRIPT_CHANNEL],
+            ['PROMOTION_LOG_CHANNEL',       bot.CONFIG.PROMOTION_LOG_CHANNEL],
+            ['REPORT_CHANNEL',              bot.CONFIG.REPORT_CHANNEL],
+            ['APPLICATION_PANEL_CHANNEL',   bot.CONFIG.APPLICATION_PANEL_CHANNEL],
+            ['APPLICATION_REVIEW_CHANNEL',  bot.CONFIG.APPLICATION_REVIEW_CHANNEL],
         ];
 
         console.log('\n=== Channel check ===');
@@ -1506,8 +1626,15 @@ function registerEventHandlers(bot) {
     });
 
     bot.client.on('messageCreate', async (message) => {
+        // Application DM handler (only human DMs)
         if (message.channel.type === 1 && !message.author.bot) {
             await bot.applicationHandler.handleApplicationAnswer(message);
+        }
+
+        // Log all guild messages
+        if (message.guild && message.guild.id === bot.CONFIG.GUILD_ID) {
+            try { await logMessageCreate(message, bot); }
+            catch (err) { console.error('[messageCreate] error:', err); }
         }
     });
 
@@ -1839,6 +1966,25 @@ function registerEventHandlers(bot) {
     bot.client.on('messageReactionRemove', async (reaction, user) => {
         try { await logReactionRemove(reaction, user, bot); }
         catch (err) { console.error('[messageReactionRemove] error:', err); }
+    });
+
+    bot.client.on('messageReactionRemoveAll', async (message, reactions) => {
+        if (!message.guild || message.guild.id !== bot.CONFIG.GUILD_ID) return;
+        try { await logReactionRemoveAll(message, reactions, bot); }
+        catch (err) { console.error('[messageReactionRemoveAll] error:', err); }
+    });
+
+    bot.client.on('messageReactionRemoveEmoji', async (reaction) => {
+        if (!reaction.message.guild || reaction.message.guild.id !== bot.CONFIG.GUILD_ID) return;
+        try { await logReactionRemoveEmoji(reaction, bot); }
+        catch (err) { console.error('[messageReactionRemoveEmoji] error:', err); }
+    });
+
+    // Thread member events
+    bot.client.on('threadMembersUpdate', async (addedMembers, removedMembers, thread) => {
+        if (thread.guild?.id !== bot.CONFIG.GUILD_ID) return;
+        try { await logThreadMembersUpdate(addedMembers, removedMembers, thread, bot); }
+        catch (err) { console.error('[threadMembersUpdate] error:', err); }
     });
 
     // Scheduled event events
