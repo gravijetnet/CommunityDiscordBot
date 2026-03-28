@@ -16,7 +16,7 @@
         }
     },
 
-    "TICKET_PANEL_TITLE":       "🎫 Support Tickets",
+    "TICKET_PANEL_TITLE":       "Support Tickets",
     "TICKET_PANEL_DESCRIPTION": "Select a category below to open a support ticket.\nPick the one that best fits your issue.",
     "TICKET_PANEL_PLACEHOLDER": "Choose a category...",
 
@@ -32,13 +32,13 @@
     "TICKET_REMOVE_SUCCESS":    "{user} has been removed from this ticket.",
     "TICKET_CLOSED":            "Ticket {channel} has been closed.",
 
-    "TICKET_CLOSE_REQUEST_TITLE":           "🔒 Close Request",
+    "TICKET_CLOSE_REQUEST_TITLE":           "Close Request",
     "TICKET_CLOSE_REQUEST_BODY":            "A staff member has requested to close this ticket. Confirm below if you're okay with that.",
     "TICKET_CLOSE_REQUEST_SENT":            "Close request sent in {channel}.",
     "TICKET_CLOSE_REQUEST_CANCELLED_TITLE": "Close Request Cancelled",
     "TICKET_CLOSE_REQUEST_CANCELLED_BODY":  "The close request was cancelled.",
 
-    "TICKET_TRANSCRIPT_TITLE":    "📄 Ticket Transcript",
+    "TICKET_TRANSCRIPT_TITLE":    "Ticket Transcript",
     "TICKET_TRANSCRIPT_DM_TITLE": "Ticket Closed",
     "TICKET_TRANSCRIPT_DM_BODY":  "Your ticket in **{guildName}** has been closed. A transcript is attached below.",
 
@@ -46,30 +46,30 @@
     "CONFIRM_CLOSE_BUTTON_LABEL": "Confirm",
     "CANCEL_CLOSE_BUTTON_LABEL":  "Cancel",
 
-    "BAN_DM_TITLE":     "🔨 You've been banned",
+    "BAN_DM_TITLE":     "You've been banned",
     "BAN_DM_BODY":      "You were banned from **{guildName}**.",
-    "BAN_LOG_TITLE":    "🔨 User Banned",
+    "BAN_LOG_TITLE":    "User Banned",
     "BAN_SUCCESS_BODY": "{user} has been banned.\n**Reason:** {reason}\n**Duration:** {duration}\n**Messages cleared:** {delMessages}",
 
-    "UNBAN_DM_TITLE":     "🔓 You've been unbanned",
+    "UNBAN_DM_TITLE":     "You've been unbanned",
     "UNBAN_DM_BODY":      "You were unbanned from **{guildName}**.",
-    "UNBAN_LOG_TITLE":    "🔓 User Unbanned",
+    "UNBAN_LOG_TITLE":    "User Unbanned",
     "UNBAN_SUCCESS_BODY": "{username} has been unbanned.\n**Reason:** {reason}",
     "UNBAN_INVALID_USER": "Couldn't find that user ID.",
 
-    "KICK_DM_TITLE":     "👢 You've been kicked",
+    "KICK_DM_TITLE":     "You've been kicked",
     "KICK_DM_BODY":      "You were kicked from **{guildName}**.",
-    "KICK_LOG_TITLE":    "👢 User Kicked",
+    "KICK_LOG_TITLE":    "User Kicked",
     "KICK_SUCCESS_BODY": "{user} has been kicked.\n**Reason:** {reason}",
 
-    "MUTE_DM_TITLE":     "🔇 You've been muted",
+    "MUTE_DM_TITLE":     "You've been muted",
     "MUTE_DM_BODY":      "You were muted in **{guildName}**.",
-    "MUTE_LOG_TITLE":    "🔇 User Muted",
+    "MUTE_LOG_TITLE":    "User Muted",
     "MUTE_SUCCESS_BODY": "{user} has been muted.\n**Reason:** {reason}\n**Duration:** {duration}",
 
-    "UNMUTE_DM_TITLE":     "🔊 You've been unmuted",
+    "UNMUTE_DM_TITLE":     "You've been unmuted",
     "UNMUTE_DM_BODY":      "Your mute in **{guildName}** has been lifted.",
-    "UNMUTE_LOG_TITLE":    "🔊 User Unmuted",
+    "UNMUTE_LOG_TITLE":    "User Unmuted",
     "UNMUTE_SUCCESS_BODY": "{user} has been unmuted.",
 
     "CANNOT_BAN_SELF":       "You can't ban yourself.",
@@ -102,14 +102,17 @@
     "APPLICATION_STARTED_BODY":    "Check your DMs to continue your application.",
     "APPLICATION_OPEN_DMS_BUTTON": "Open DMs",
 
-    "APPLICATION_CONFIRM_BODY":         "You're about to apply for **{category}**.\n\nI'll send you a series of questions — you have **3 hours** to complete them. You can cancel at any time.",
+    "WELCOME_BODY":   "Hey {user}, welcome to **{guild}**.",
+    "WELCOME_FOOTER": "Member #{count}",
+
+    "APPLICATION_CONFIRM_BODY":         "You're about to apply for **{category}**.\n\nI'll send you a series of questions — you have **{hours} hours** to complete them. You can cancel at any time.",
     "APPLICATION_CONFIRM_BUILDER_NOTE": "\n> **Note:** The Builder role is fully voluntary. Builders have no extra permissions and the work is unpaid.",
     "APPLICATION_CONFIRM_DEV_NOTE":     "\n> **Note:** The Developer role is fully voluntary. All submissions require full source code and the work is unpaid.",
 
     "APPLICATION_IN_PROGRESS_TITLE": "Application in Progress",
-    "APPLICATION_IN_PROGRESS_BODY":  "You have **3 hours** to complete this application. Hit cancel at any time to stop.",
+    "APPLICATION_IN_PROGRESS_BODY":  "You have **{hours} hours** to complete this application. Hit cancel at any time to stop.",
 
-    "APPLICATION_SUMMARY_TITLE":    "📋 Summary — {category}",
+    "APPLICATION_SUMMARY_TITLE":    "Summary — {category}",
     "APPLICATION_SUMMARY_BODY":     "Review your answers below. Edit anything before submitting.",
     "APPLICATION_SUMMARY_FOOTER":   "Take your time — you can edit any answer before submitting.",
     "APPLICATION_ANSWER_UPDATED":   "Answer to question {n} updated.",
@@ -121,7 +124,7 @@
     "APPLICATION_CANCELLED_TITLE": "Application Cancelled",
     "APPLICATION_CANCELLED_BODY":  "Your application has been cancelled.",
     "APPLICATION_TIMEOUT_TITLE":   "Application Expired",
-    "APPLICATION_TIMEOUT_BODY":    "Your application timed out after 3 hours. Feel free to start a new one whenever you're ready.",
+    "APPLICATION_TIMEOUT_BODY":    "Your application timed out after {hours} hours. Feel free to start a new one whenever you're ready.",
 
     "APPLICATION_ACCEPTED_TITLE":       "Application Accepted",
     "APPLICATION_ACCEPTED_BODY":        "Your **{category}** application was accepted! You've been given the role.",

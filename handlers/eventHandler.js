@@ -1,214 +1,15 @@
 const { registerCommands, handleCommand } = require('./commandHandler');
-const { EmbedBuilder, ChannelType, PermissionsBitField, ButtonBuilder, ButtonStyle, ActionRowBuilder, StringSelectMenuBuilder, AuditLogEvent } = require('discord.js');
+const { EmbedBuilder, ButtonBuilder, ButtonStyle, ActionRowBuilder, StringSelectMenuBuilder, AuditLogEvent, ActivityType } = require('discord.js');
+const { createTicket, closeTicketChannel } = require('./ticketFunctions');
 const ApplicationHandler = require('./applicationHandler');
 const MSG = require('../config/messages');
 
-// Ticket-Funktionen
-async function createTicket(interaction, category, bot) {
-    return new Promise((resolve, reject) => {
-        bot.db.get("SELECT * FROM ticket_bans WHERE user_id = ?", [interaction.user.id], async (err, ban) => {
-            if (err) {
-                await interaction.reply({ content: MSG.GENERIC_DB_ERROR, ephemeral: true });
-                return reject(err);
-            }
-
-            if (ban) {
-                const embed = new EmbedBuilder()
-                    .setTitle("❌ Ticket Creation Blocked")
-                    .setDescription(MSG.TICKET_BANNED)
-                    .setColor(0xff0000);
-                await interaction.reply({ embeds: [embed], ephemeral: true });
-                return resolve();
-            }
-
-            bot.db.get("SELECT COUNT(*) as count FROM tickets WHERE user_id = ?", [interaction.user.id], async (err, row) => {
-                if (err) {
-                    await interaction.reply({ content: MSG.GENERIC_DB_ERROR, ephemeral: true });
-                    return reject(err);
-                }
-
-                const ticketCount = row.count + 1;
-                await createTicketChannel(interaction, category, ticketCount, bot);
-                resolve();
-            });
-        });
-    });
-}
-
-async function createTicketChannel(interaction, category, ticketCount, bot) {
-    const categoryChannel = await getLogChannel(bot, bot.CONFIG.SUPPORT_CATEGORY);
-    const guild = interaction.guild;
-
-    if (!categoryChannel) {
-        await interaction.reply({ content: MSG.GENERIC_ERROR, ephemeral: true });
-        return;
-    }
-
-    const channelName = `${category}-${interaction.user.username}-${ticketCount.toString().padStart(4, '0')}`;
-    const catConfig = bot.CONFIG.CATEGORY_PERMISSIONS[category];
-
-    const permissionOverwrites = [
-        {
-            id: guild.id,
-            deny: [PermissionsBitField.Flags.ViewChannel]
-        },
-        {
-            id: interaction.user.id,
-            allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages]
-        }
-    ];
-
-    for (const roleId of catConfig.staff_roles) {
-        permissionOverwrites.push({
-            id: roleId,
-            allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages]
-        });
-    }
-
-    const channel = await guild.channels.create({
-        name: channelName,
-        type: ChannelType.GuildText,
-        parent: categoryChannel.id,
-        permissionOverwrites: permissionOverwrites
-    });
-
-    bot.db.run(
-        "INSERT INTO tickets (user_id, channel_id, category) VALUES (?, ?, ?)",
-        [interaction.user.id, channel.id, category]
-    );
-
-    const embed = new EmbedBuilder()
-        .setTitle(catConfig.name)
-        .setDescription(`Hello ${interaction.user}! Support staff will be with you shortly.\n\nPlease describe your issue in detail.`)
-        .setColor(catConfig.color)
-        .setFooter({ text: `Ticket ID: ${ticketCount.toString().padStart(4, '0')}` });
-
-    const closeButton = new ButtonBuilder()
-        .setCustomId('close_ticket')
-        .setLabel('Close Ticket')
-        .setStyle(ButtonStyle.Danger);
-
-    const row = new ActionRowBuilder().addComponents(closeButton);
-
-    await channel.send({ content: `${interaction.user}`, embeds: [embed], components: [row] });
-
-    const confirmEmbed = new EmbedBuilder()
-        .setTitle("✅ Ticket Created")
-        .setDescription(`Your ticket has been created: ${channel}`)
-        .setColor(0x00ff00);
-
-    await interaction.reply({ embeds: [confirmEmbed], ephemeral: true });
-}
-
-async function closeTicketChannel(channel, closer, bot) {
-    return new Promise((resolve, reject) => {
-        bot.db.get("SELECT * FROM tickets WHERE channel_id = ?", [channel.id], async (err, ticket) => {
-            if (err) return reject(err);
-            if (!ticket) return resolve();
-
-            bot.db.run(
-                "UPDATE tickets SET status = 'closed', closed_at = ? WHERE channel_id = ?",
-                [new Date().toISOString(), channel.id],
-                async (dbErr) => {
-                    if (dbErr) {
-                        console.error('Database error:', dbErr);
-                        return reject(dbErr);
-                    }
-
-                    let transcript = "";
-                    try {
-                        const messages = await channel.messages.fetch({ limit: 100 });
-                        messages.reverse().forEach(message => {
-                            const attachments = message.attachments.size > 0 
-                                ? ` [${message.attachments.size} attachment(s)]` 
-                                : '';
-                            transcript += `${message.author.username} (${message.author.id}) - ${message.createdAt}: ${message.content}${attachments}\n`;
-                        });
-                    } catch (error) {
-                        console.error('Error fetching messages for transcript:', error);
-                    }
-
-                    try {
-                        const transcriptChannel = await getLogChannel(bot, bot.CONFIG.TRANSCRIPT_CHANNEL);
-                        if (transcriptChannel) {
-                            const embed = new EmbedBuilder()
-                                .setTitle("📄 Ticket Transcript")
-                                .setColor(0x0000ff)
-                                .setTimestamp()
-                                .addFields(
-                                    { name: "Topic", value: bot.CONFIG.CATEGORY_PERMISSIONS[ticket.category]?.name || 'Unknown', inline: true },
-                                    { name: "User", value: `<@${ticket.user_id}>`, inline: true },
-                                    { name: "Closed by", value: closer.toString(), inline: true },
-                                    { name: "Ticket ID", value: `#${ticket.id}`, inline: true }
-                                );
-
-                            const files = [];
-                            if (transcript.trim()) {
-                                files.push({
-                                    attachment: Buffer.from(transcript),
-                                    name: `transcript-${ticket.id}.txt`
-                                });
-                            }
-
-                            await transcriptChannel.send({ 
-                                embeds: [embed],
-                                files: files
-                            });
-                        }
-                    } catch (error) {
-                        console.error('Error sending transcript:', error);
-                    }
-
-                    try {
-                        const user = await bot.client.users.fetch(ticket.user_id);
-                        const dmEmbed = new EmbedBuilder()
-                            .setTitle("📄 Ticket Closed")
-                            .setDescription(`Your ticket in **${channel.guild.name}** has been closed.`)
-                            .setColor(0x0000ff)
-                            .setTimestamp()
-                            .addFields(
-                                { name: "Topic", value: bot.CONFIG.CATEGORY_PERMISSIONS[ticket.category]?.name || 'Unknown', inline: true },
-                                { name: "Closed by", value: closer.toString(), inline: true }
-                            );
-
-                        const dmFiles = [];
-                        if (transcript.trim()) {
-                            dmFiles.push({
-                                attachment: Buffer.from(transcript),
-                                name: `transcript-${ticket.id}.txt`
-                            });
-                        }
-
-                        await user.send({ 
-                            embeds: [dmEmbed],
-                            files: dmFiles
-                        });
-                    } catch (error) {
-                        console.log(`Could not send transcript to user ${ticket.user_id}`);
-                    }
-
-                    try {
-                        await channel.delete();
-                        console.log(`Successfully closed ticket #${ticket.id} in channel ${channel.name}`);
-                    } catch (error) {
-                        console.error('Error deleting channel:', error);
-                    }
-
-                    resolve();
-                }
-            );
-        });
-    });
-}
-
-// Status und Setup Funktionen
+// Status and setup
 async function updateStatus(bot) {
     try {
-        const activity = `on ${bot.CONFIG.MINECRAFT_SERVER}`;
-        bot.client.user.setActivity(activity, { type: 0 });
+        bot.client.user.setActivity(`on ${bot.CONFIG.MINECRAFT_SERVER}`, { type: ActivityType.Playing });
     } catch (error) {
         console.error('Error updating status:', error);
-        bot.client.user.setActivity(`on ${bot.CONFIG.MINECRAFT_SERVER} | Server offline`, { type: 0 });
     }
 }
 
@@ -224,7 +25,7 @@ async function setupTicketChannel(bot) {
         const existingPanel = messages.find(msg => 
             msg.author.id === bot.client.user.id && 
             msg.embeds.length > 0 && 
-            msg.embeds[0].title === "🎫 Support Tickets"
+            msg.embeds[0].title === "Support Tickets"
         );
 
         if (existingPanel) {
@@ -259,7 +60,7 @@ async function setupTicketChannel(bot) {
     console.log('Ticket panel created successfully');
 }
 
-// Event Handler Funktionen
+// Interaction handlers
 async function handleCloseTicket(interaction, bot) {
     await interaction.deferUpdate();
 
@@ -285,10 +86,9 @@ async function handleCloseTicket(interaction, bot) {
         }
 
         try {
-            const { closeTicketChannel: closeFn } = require('./ticketFunctions');
-            await closeFn(interaction.channel, interaction.user, bot);
+            await closeTicketChannel(interaction.channel, interaction.user, bot);
         } catch (error) {
-            console.error('[handleCloseTicket] Fehler:', error);
+            console.error('[handleCloseTicket] error:', error);
             await interaction.followUp({ content: MSG.GENERIC_ERROR, ephemeral: true }).catch(() => {});
         }
     });
@@ -296,8 +96,7 @@ async function handleCloseTicket(interaction, bot) {
 
 async function handleTicketSelect(interaction, bot) {
     const category = interaction.values[0];
-    const { createTicket: createFn } = require('./ticketFunctions');
-    await createFn(interaction, category, bot);
+    await createTicket(interaction, category, bot);
 }
 
 // ── Logging helpers ───────────────────────────────────────────────────────────
@@ -327,7 +126,7 @@ async function fetchAuditExecutor(guild, actionType, targetId = null, maxAgeMs =
 }
 
 function fmtExecutor(executor) {
-    if (!executor) return 'Unbekannt';
+    if (!executor) return 'Unknown';
     return `${executor} (${executor.tag})\n\`${executor.id}\``;
 }
 
@@ -362,31 +161,31 @@ async function logMessageDelete(message, bot) {
     const executor = await fetchAuditExecutor(message.guild, AuditLogEvent.MessageDelete, message.author.id);
     const deletedByValue = executor
         ? `${executor} (${executor.tag})\n\`${executor.id}\``
-        : `${message.author} (selbst)\n\`${message.author.id}\``;
+        : `${message.author} (self)\n\`${message.author.id}\``;
 
     const embed = new EmbedBuilder()
-        .setTitle('🗑️ Message Deleted')
+        .setTitle('Message Deleted')
         .setColor(isMonitored ? 0xff4500 : 0xff0000)
         .setThumbnail(message.author.displayAvatarURL({ dynamic: true }))
         .setTimestamp()
         .addFields(
-            { name: '👤 Author',      value: `${message.author} (${message.author.tag})\n\`${message.author.id}\``, inline: true },
-            { name: '📌 Channel',     value: `${message.channel}\n\`${message.channel.name}\``,                      inline: true },
-            { name: '🕐 Sent',        value: `<t:${Math.floor(message.createdTimestamp / 1000)}:F>`,                 inline: true },
-            { name: '🗑️ Deleted by', value: deletedByValue,                                                          inline: true }
+            { name: 'Author',      value: `${message.author} (${message.author.tag})\n\`${message.author.id}\``, inline: true },
+            { name: 'Channel',     value: `${message.channel}\n\`${message.channel.name}\``,                      inline: true },
+            { name: 'Sent',        value: `<t:${Math.floor(message.createdTimestamp / 1000)}:F>`,                 inline: true },
+            { name: 'Deleted by', value: deletedByValue,                                                          inline: true }
         )
-        .setFooter({ text: `Message ID: ${message.id}${isMonitored ? '  •  ⚠️ Monitored category' : ''}` });
+        .setFooter({ text: `Message ID: ${message.id}${isMonitored ? '  •  Monitored category' : ''}` });
 
     if (message.content) {
         const preview = message.content.length > 1024
             ? message.content.substring(0, 1020) + '…'
             : message.content;
-        embed.addFields({ name: `📝 Content (${message.content.length} chars)`, value: preview, inline: false });
+        embed.addFields({ name: `Content (${message.content.length} chars)`, value: preview, inline: false });
     }
 
     if (message.attachments.size > 0) {
         const list = message.attachments.map(a => `[${a.name}](${a.url})`).join('\n');
-        embed.addFields({ name: `📎 Attachments (${message.attachments.size})`, value: list.substring(0, 1024), inline: false });
+        embed.addFields({ name: `Attachments (${message.attachments.size})`, value: list.substring(0, 1024), inline: false });
     }
 
     const logChannel = await getLogChannel(bot, bot.CONFIG.MESSAGE_LOG_CHANNEL);
@@ -397,22 +196,22 @@ async function logMessageDelete(message, bot) {
         try {
             const dmUser = await bot.client.users.fetch(bot.CONFIG.DM_USER_ID);
             const dmEmbed = new EmbedBuilder()
-                .setTitle('🚨 Message Deleted in Monitored Category')
+                .setTitle('Message Deleted in Monitored Category')
                 .setColor(0xff4500)
                 .setThumbnail(message.author.displayAvatarURL({ dynamic: true }))
                 .setTimestamp()
                 .addFields(
-                    { name: '👤 Author',     value: `${message.author.tag}\n\`${message.author.id}\``,            inline: true },
-                    { name: '📌 Channel',    value: `#${message.channel.name}`,                                    inline: true },
-                    { name: '🏠 Server',     value: message.guild.name,                                            inline: true },
-                    { name: '🕐 Sent',       value: `<t:${Math.floor(message.createdTimestamp / 1000)}:F>`,        inline: true },
-                    { name: '🗑️ Deleted',   value: `<t:${Math.floor(Date.now() / 1000)}:F>`,                      inline: true },
-                    { name: '🆔 Message ID', value: message.id,                                                    inline: true }
+                    { name: 'Author',     value: `${message.author.tag}\n\`${message.author.id}\``,            inline: true },
+                    { name: 'Channel',    value: `#${message.channel.name}`,                                    inline: true },
+                    { name: 'Server',     value: message.guild.name,                                            inline: true },
+                    { name: 'Sent',       value: `<t:${Math.floor(message.createdTimestamp / 1000)}:F>`,        inline: true },
+                    { name: 'Deleted',   value: `<t:${Math.floor(Date.now() / 1000)}:F>`,                      inline: true },
+                    { name: 'Message ID', value: message.id,                                                    inline: true }
                 );
 
             if (message.content) {
                 dmEmbed.addFields({
-                    name: `📝 Content (${message.content.length} chars)`,
+                    name: `Content (${message.content.length} chars)`,
                     value: message.content.length > 2000 ? message.content.substring(0, 1996) + '…' : message.content,
                     inline: false
                 });
@@ -420,7 +219,7 @@ async function logMessageDelete(message, bot) {
 
             if (message.attachments.size > 0) {
                 const list = message.attachments.map(a => `**${a.name}**: ${a.url}`).join('\n');
-                dmEmbed.addFields({ name: `📎 Attachments (${message.attachments.size})`, value: list.substring(0, 1024), inline: false });
+                dmEmbed.addFields({ name: `Attachments (${message.attachments.size})`, value: list.substring(0, 1024), inline: false });
             }
 
             await dmUser.send({ embeds: [dmEmbed] });
@@ -442,20 +241,20 @@ async function logMessageUpdate(oldMessage, newMessage, bot) {
     if (oldMessage.content === newMessage.content) return;
 
     const embed = new EmbedBuilder()
-        .setTitle('✏️ Message Edited')
+        .setTitle('Message Edited')
         .setColor(0xffcc00)
         .setThumbnail(newMessage.author.displayAvatarURL({ dynamic: true }))
         .setTimestamp()
         .addFields(
-            { name: '👤 Author',          value: `${newMessage.author} (${newMessage.author.tag})\n\`${newMessage.author.id}\``, inline: true },
-            { name: '📌 Channel',         value: `${newMessage.channel}\n\`${newMessage.channel.name}\``,                       inline: true },
-            { name: '🔗 Jump to message', value: `[Click here](${newMessage.url})`,                                              inline: true }
+            { name: 'Author',          value: `${newMessage.author} (${newMessage.author.tag})\n\`${newMessage.author.id}\``, inline: true },
+            { name: 'Channel',         value: `${newMessage.channel}\n\`${newMessage.channel.name}\``,                       inline: true },
+            { name: 'Jump to message', value: `[Click here](${newMessage.url})`,                                              inline: true }
         )
         .setFooter({ text: `Message ID: ${newMessage.id}` });
 
     if (oldMessage.content) {
         embed.addFields({
-            name: `📝 Before (${oldMessage.content.length} chars)`,
+            name: `Before (${oldMessage.content.length} chars)`,
             value: oldMessage.content.length > 1024 ? oldMessage.content.substring(0, 1020) + '…' : oldMessage.content,
             inline: false
         });
@@ -463,7 +262,7 @@ async function logMessageUpdate(oldMessage, newMessage, bot) {
 
     if (newMessage.content) {
         embed.addFields({
-            name: `📝 After (${newMessage.content.length} chars)`,
+            name: `After (${newMessage.content.length} chars)`,
             value: newMessage.content.length > 1024 ? newMessage.content.substring(0, 1020) + '…' : newMessage.content,
             inline: false
         });
@@ -479,25 +278,25 @@ async function logChannelCreate(channel, bot) {
     const executor = await fetchAuditExecutor(channel.guild, AuditLogEvent.ChannelCreate, channel.id);
 
     const embed = new EmbedBuilder()
-        .setTitle('📁 Channel Created')
+        .setTitle('Channel Created')
         .setColor(0x00cc44)
         .setTimestamp()
         .addFields(
-            { name: '📛 Name',       value: channel.name,                    inline: true },
-            { name: '🏷️ Type',      value: channelTypeName(channel.type),   inline: true },
-            { name: '🆔 ID',         value: `\`${channel.id}\``,             inline: true },
-            { name: '👤 Erstellt von', value: fmtExecutor(executor),          inline: true }
+            { name: 'Name',       value: channel.name,                    inline: true },
+            { name: 'Type',      value: channelTypeName(channel.type),   inline: true },
+            { name: 'ID',         value: `\`${channel.id}\``,             inline: true },
+            { name: 'Created by',       value: fmtExecutor(executor),          inline: true }
         )
         .setFooter({ text: 'Channel created' });
 
     if (channel.parent) {
-        embed.addFields({ name: '📂 Category', value: channel.parent.name, inline: true });
+        embed.addFields({ name: 'Category', value: channel.parent.name, inline: true });
     }
     if (channel.nsfw !== undefined && channel.nsfw) {
-        embed.addFields({ name: '🔞 NSFW', value: 'Yes', inline: true });
+        embed.addFields({ name: 'NSFW', value: 'Yes', inline: true });
     }
     if (channel.topic) {
-        embed.addFields({ name: '📋 Topic', value: channel.topic.substring(0, 1024), inline: false });
+        embed.addFields({ name: 'Topic', value: channel.topic.substring(0, 1024), inline: false });
     }
 
     const logChannel = await getLogChannel(bot, bot.CONFIG.CHANNEL_LOG_CHANNEL);
@@ -508,22 +307,22 @@ async function logChannelDelete(channel, bot) {
     const executor = await fetchAuditExecutor(channel.guild, AuditLogEvent.ChannelDelete, channel.id);
 
     const embed = new EmbedBuilder()
-        .setTitle('🗑️ Channel Deleted')
+        .setTitle('Channel Deleted')
         .setColor(0xff0000)
         .setTimestamp()
         .addFields(
-            { name: '📛 Name',        value: channel.name,                    inline: true },
-            { name: '🏷️ Type',       value: channelTypeName(channel.type),   inline: true },
-            { name: '🆔 ID',          value: `\`${channel.id}\``,             inline: true },
-            { name: '👤 Gelöscht von', value: fmtExecutor(executor),           inline: true }
+            { name: 'Name',        value: channel.name,                    inline: true },
+            { name: 'Type',       value: channelTypeName(channel.type),   inline: true },
+            { name: 'ID',          value: `\`${channel.id}\``,             inline: true },
+            { name: 'Deleted by',       value: fmtExecutor(executor),           inline: true }
         )
         .setFooter({ text: 'Channel deleted' });
 
     if (channel.parent) {
-        embed.addFields({ name: '📂 Category', value: channel.parent.name, inline: true });
+        embed.addFields({ name: 'Category', value: channel.parent.name, inline: true });
     }
     if (channel.topic) {
-        embed.addFields({ name: '📋 Topic', value: channel.topic.substring(0, 1024), inline: false });
+        embed.addFields({ name: 'Topic', value: channel.topic.substring(0, 1024), inline: false });
     }
 
     const logChannel = await getLogChannel(bot, bot.CONFIG.CHANNEL_LOG_CHANNEL);
@@ -559,14 +358,14 @@ async function logChannelUpdate(oldChannel, newChannel, bot) {
     const executor = await fetchAuditExecutor(newChannel.guild, AuditLogEvent.ChannelUpdate, newChannel.id);
 
     const embed = new EmbedBuilder()
-        .setTitle('⚙️ Channel Updated')
+        .setTitle('Channel Updated')
         .setColor(0xffcc00)
         .setTimestamp()
         .addFields(
-            { name: '📌 Channel',                    value: `${newChannel} \`${newChannel.name}\``, inline: true },
-            { name: '🆔 ID',                         value: `\`${newChannel.id}\``,                 inline: true },
-            { name: '👤 Geändert von',               value: fmtExecutor(executor),                  inline: true },
-            { name: `📝 Changes (${changes.length})`, value: changes.join('\n'),                     inline: false }
+            { name: 'Channel',                    value: `${newChannel} \`${newChannel.name}\``, inline: true },
+            { name: 'ID',                         value: `\`${newChannel.id}\``,                 inline: true },
+            { name: 'Changed by',                     value: fmtExecutor(executor),                  inline: true },
+            { name: `Changes (${changes.length})`,    value: changes.join('\n'),                     inline: false }
         )
         .setFooter({ text: `Channel ID: ${newChannel.id}` });
 
@@ -580,17 +379,17 @@ async function logRoleCreate(role, bot) {
     const executor = await fetchAuditExecutor(role.guild, AuditLogEvent.RoleCreate, role.id);
 
     const embed = new EmbedBuilder()
-        .setTitle('🆕 Role Created')
+        .setTitle('Role Created')
         .setColor(role.color || 0x00cc44)
         .setTimestamp()
         .addFields(
-            { name: '📛 Name',          value: `${role} \`${role.name}\``,     inline: true },
-            { name: '🆔 ID',            value: `\`${role.id}\``,               inline: true },
-            { name: '👤 Erstellt von',  value: fmtExecutor(executor),          inline: true },
-            { name: '🎨 Color',         value: role.hexColor,                  inline: true },
-            { name: '📊 Position',      value: `${role.position}`,             inline: true },
-            { name: '🔔 Mentionable',   value: role.mentionable ? 'Yes' : 'No', inline: true },
-            { name: '📌 Hoisted',       value: role.hoist       ? 'Yes' : 'No', inline: true }
+            { name: 'Name',          value: `${role} \`${role.name}\``,     inline: true },
+            { name: 'ID',            value: `\`${role.id}\``,               inline: true },
+            { name: 'Created by',        value: fmtExecutor(executor),          inline: true },
+            { name: 'Color',         value: role.hexColor,                  inline: true },
+            { name: 'Position',      value: `${role.position}`,             inline: true },
+            { name: 'Mentionable',   value: role.mentionable ? 'Yes' : 'No', inline: true },
+            { name: 'Hoisted',       value: role.hoist       ? 'Yes' : 'No', inline: true }
         )
         .setFooter({ text: `Role ID: ${role.id}` });
 
@@ -602,17 +401,17 @@ async function logRoleDelete(role, bot) {
     const executor = await fetchAuditExecutor(role.guild, AuditLogEvent.RoleDelete, role.id);
 
     const embed = new EmbedBuilder()
-        .setTitle('🗑️ Role Deleted')
+        .setTitle('Role Deleted')
         .setColor(0xff0000)
         .setTimestamp()
         .addFields(
-            { name: '📛 Name',         value: `\`${role.name}\``,              inline: true },
-            { name: '🆔 ID',           value: `\`${role.id}\``,               inline: true },
-            { name: '👤 Gelöscht von', value: fmtExecutor(executor),          inline: true },
-            { name: '🎨 Color',        value: role.hexColor,                  inline: true },
-            { name: '📊 Position',     value: `${role.position}`,             inline: true },
-            { name: '🔔 Mentionable',  value: role.mentionable ? 'Yes' : 'No', inline: true },
-            { name: '📌 Hoisted',      value: role.hoist       ? 'Yes' : 'No', inline: true }
+            { name: 'Name',         value: `\`${role.name}\``,              inline: true },
+            { name: 'ID',           value: `\`${role.id}\``,               inline: true },
+            { name: 'Deleted by',       value: fmtExecutor(executor),          inline: true },
+            { name: 'Color',        value: role.hexColor,                  inline: true },
+            { name: 'Position',     value: `${role.position}`,             inline: true },
+            { name: 'Mentionable',  value: role.mentionable ? 'Yes' : 'No', inline: true },
+            { name: 'Hoisted',      value: role.hoist       ? 'Yes' : 'No', inline: true }
         )
         .setFooter({ text: `Role ID: ${role.id}` });
 
@@ -652,14 +451,14 @@ async function logRoleUpdate(oldRole, newRole, bot) {
     const executor = await fetchAuditExecutor(newRole.guild, AuditLogEvent.RoleUpdate, newRole.id);
 
     const embed = new EmbedBuilder()
-        .setTitle('⚙️ Role Updated')
+        .setTitle('Role Updated')
         .setColor(newRole.color || 0xffcc00)
         .setTimestamp()
         .addFields(
-            { name: '📛 Role',                        value: `${newRole} \`${newRole.name}\``,           inline: true },
-            { name: '🆔 ID',                          value: `\`${newRole.id}\``,                        inline: true },
-            { name: '👤 Geändert von',                value: fmtExecutor(executor),                      inline: true },
-            { name: `📝 Changes (${changes.length})`, value: changes.join('\n').substring(0, 1024),       inline: false }
+            { name: 'Role',                        value: `${newRole} \`${newRole.name}\``,           inline: true },
+            { name: 'ID',                          value: `\`${newRole.id}\``,                        inline: true },
+            { name: 'Changed by',                      value: fmtExecutor(executor),                      inline: true },
+            { name: `Changes (${changes.length})`,    value: changes.join('\n').substring(0, 1024),       inline: false }
         )
         .setFooter({ text: `Role ID: ${newRole.id}` });
 
@@ -675,15 +474,15 @@ async function logMemberJoin(member, bot) {
     const isNewAccount   = accountAgeDays < 7;
 
     const embed = new EmbedBuilder()
-        .setTitle('📥 Member Joined')
+        .setTitle('Member Joined')
         .setColor(isNewAccount ? 0xff8c00 : 0x00cc44)
         .setThumbnail(member.user.displayAvatarURL({ dynamic: true }))
         .setTimestamp()
         .addFields(
-            { name: '👤 User',           value: `${member.user} (${member.user.tag})\n\`${member.user.id}\``,             inline: true },
-            { name: '📅 Account Created', value: `<t:${Math.floor(member.user.createdTimestamp / 1000)}:F>`,               inline: true },
-            { name: '📆 Account Age',     value: isNewAccount
-                ? `⚠️ **${accountAgeDays} day(s) — New account!**`
+            { name: 'User',           value: `${member.user} (${member.user.tag})\n\`${member.user.id}\``,             inline: true },
+            { name: 'Account Created', value: `<t:${Math.floor(member.user.createdTimestamp / 1000)}:F>`,               inline: true },
+            { name: 'Account Age',     value: isNewAccount
+                ? `**${accountAgeDays} day(s) — New account!**`
                 : `${accountAgeDays} days`,                                                                                 inline: true }
         )
         .setFooter({ text: `Member #${member.guild.memberCount}` });
@@ -703,15 +502,15 @@ async function logMemberLeave(member, bot) {
         .join(', ') || 'None';
 
     const embed = new EmbedBuilder()
-        .setTitle('📤 Member Left')
+        .setTitle('Member Left')
         .setColor(0xff0000)
         .setThumbnail(member.user.displayAvatarURL({ dynamic: true }))
         .setTimestamp()
         .addFields(
-            { name: '👤 User',            value: `${member.user.tag}\n\`${member.user.id}\``,                                                    inline: true },
-            { name: '📅 Joined',          value: member.joinedAt ? `<t:${Math.floor(member.joinedAt.getTime() / 1000)}:F>` : 'Unknown',          inline: true },
-            { name: '⏱️ Time in server', value: durationStr,                                                                                     inline: true },
-            { name: '🎭 Roles',           value: roleList.length > 1024 ? roleList.substring(0, 1020) + '…' : roleList,                          inline: false }
+            { name: 'User',            value: `${member.user.tag}\n\`${member.user.id}\``,                                                    inline: true },
+            { name: 'Joined',          value: member.joinedAt ? `<t:${Math.floor(member.joinedAt.getTime() / 1000)}:F>` : 'Unknown',          inline: true },
+            { name: 'Time in server', value: durationStr,                                                                                     inline: true },
+            { name: 'Roles',           value: roleList.length > 1024 ? roleList.substring(0, 1020) + '…' : roleList,                          inline: false }
         )
         .setFooter({ text: `Server now has ${member.guild.memberCount} members` });
 
@@ -736,19 +535,19 @@ async function logUserUpdate(oldUser, newUser, bot) {
     if (changes.length === 0) return;
 
     const embed = new EmbedBuilder()
-        .setTitle('👤 User Updated')
+        .setTitle('User Updated')
         .setColor(0xffcc00)
         .setThumbnail(newUser.displayAvatarURL({ dynamic: true }))
         .setTimestamp()
         .addFields(
-            { name: '👤 User',                       value: `${newUser} (${newUser.tag})\n\`${newUser.id}\``, inline: true },
-            { name: `📝 Changes (${changes.length})`, value: changes.join('\n'),                              inline: false }
+            { name: 'User',                       value: `${newUser} (${newUser.tag})\n\`${newUser.id}\``, inline: true },
+            { name: `Changes (${changes.length})`, value: changes.join('\n'),                              inline: false }
         )
         .setFooter({ text: `User ID: ${newUser.id}` });
 
     if (oldUser.avatar !== newUser.avatar && oldUser.avatar) {
         embed.addFields({
-            name: '🖼️ Previous avatar',
+            name: 'Previous avatar',
             value: `[Click to view](${oldUser.displayAvatarURL({ dynamic: true, size: 256 })})`,
             inline: true
         });
@@ -780,10 +579,9 @@ async function handleCloseRequestConfirm(interaction, bot) {
         }
 
         try {
-            const { closeTicketChannel: closeFn } = require('./ticketFunctions');
-            await closeFn(interaction.channel, interaction.user, bot);
+            await closeTicketChannel(interaction.channel, interaction.user, bot);
         } catch (e) {
-            console.error('[close_request_confirm] Fehler:', e);
+            console.error('[close_request_confirm] error:', e);
             await interaction.followUp({ content: MSG.GENERIC_ERROR, ephemeral: true }).catch(() => {});
         }
     });
@@ -829,33 +627,32 @@ async function handleReportButton(interaction, bot) {
 
         if (action === 'ban') {
             if (!member) {
-                await interaction.reply({ content: 'Nutzer nicht gefunden.', ephemeral: true });
+                await interaction.reply({ content: MSG.GENERIC_ERROR, ephemeral: true });
                 return;
             }
-            await guild.bans.create(reportedUserId, { reason: `Gebannt via Report durch ${interaction.user.tag}`, deleteMessageSeconds: 0 });
+            await guild.bans.create(reportedUserId, { reason: `Banned via report by ${interaction.user.tag}`, deleteMessageSeconds: 0 });
             const embed = new EmbedBuilder()
-                .setTitle('🔨 Nutzer gebannt')
-                .setDescription(`${reportedUser.tag} wurde via Report gebannt.`)
+                .setTitle('User Banned')
+                .setDescription(`${reportedUser.tag} was banned via report.`)
                 .setColor(0xff0000)
                 .setTimestamp();
             await interaction.update({ embeds: [embed], components: [] });
 
         } else if (action === 'mute') {
             if (!member) {
-                await interaction.reply({ content: 'Nutzer nicht gefunden.', ephemeral: true });
+                await interaction.reply({ content: MSG.GENERIC_ERROR, ephemeral: true });
                 return;
             }
-            // 14 days timeout (as labeled on button)
-            await member.timeout(14 * 24 * 60 * 60 * 1000, `Gemutet via Report durch ${interaction.user.tag}`);
+            await member.timeout(14 * 24 * 60 * 60 * 1000, `Timed out via report by ${interaction.user.tag}`);
             const embed = new EmbedBuilder()
-                .setTitle('🔇 Nutzer gemutet')
-                .setDescription(`${reportedUser.tag} wurde für 14 Tage gemutet.`)
+                .setTitle('User Timed Out')
+                .setDescription(`${reportedUser.tag} was timed out for 14 days.`)
                 .setColor(0x808080)
                 .setTimestamp();
             await interaction.update({ embeds: [embed], components: [] });
         }
     } catch (err) {
-        console.error('[handleReportButton] Fehler:', err);
+        console.error('[handleReportButton] error:', err);
         try {
             await interaction.reply({ content: MSG.GENERIC_ERROR, ephemeral: true });
         } catch { /* already replied */ }
@@ -868,35 +665,35 @@ async function logGuildUpdate(oldGuild, newGuild, bot) {
     const changes = [];
 
     if (oldGuild.name !== newGuild.name)
-        changes.push(`**Servername:** \`${oldGuild.name}\` → \`${newGuild.name}\``);
+        changes.push(`**Name:** \`${oldGuild.name}\` → \`${newGuild.name}\``);
     if (oldGuild.description !== newGuild.description)
-        changes.push(`**Beschreibung:** ${oldGuild.description ?? 'Keine'} → ${newGuild.description ?? 'Keine'}`);
+        changes.push(`**Description:** ${oldGuild.description ?? 'None'} → ${newGuild.description ?? 'None'}`);
     if (oldGuild.icon !== newGuild.icon)
-        changes.push(`**Server-Icon:** Geändert`);
+        changes.push(`**Icon:** Updated`);
     if (oldGuild.banner !== newGuild.banner)
-        changes.push(`**Banner:** Geändert`);
+        changes.push(`**Banner:** Updated`);
     if (oldGuild.splash !== newGuild.splash)
-        changes.push(`**Einladungs-Hintergrund:** Geändert`);
+        changes.push(`**Splash:** Updated`);
     if (oldGuild.verificationLevel !== newGuild.verificationLevel)
-        changes.push(`**Verifizierungslevel:** ${oldGuild.verificationLevel} → ${newGuild.verificationLevel}`);
+        changes.push(`**Verification Level:** ${oldGuild.verificationLevel} → ${newGuild.verificationLevel}`);
     if (oldGuild.explicitContentFilter !== newGuild.explicitContentFilter)
         changes.push(`**Explicit Content Filter:** ${oldGuild.explicitContentFilter} → ${newGuild.explicitContentFilter}`);
     if (oldGuild.afkChannelId !== newGuild.afkChannelId)
-        changes.push(`**AFK-Kanal:** <#${oldGuild.afkChannelId ?? 0}> → <#${newGuild.afkChannelId ?? 0}>`);
+        changes.push(`**AFK Channel:** <#${oldGuild.afkChannelId ?? 0}> → <#${newGuild.afkChannelId ?? 0}>`);
     if (oldGuild.systemChannelId !== newGuild.systemChannelId)
-        changes.push(`**System-Kanal:** <#${oldGuild.systemChannelId ?? 0}> → <#${newGuild.systemChannelId ?? 0}>`);
+        changes.push(`**System Channel:** <#${oldGuild.systemChannelId ?? 0}> → <#${newGuild.systemChannelId ?? 0}>`);
     if (oldGuild.premiumTier !== newGuild.premiumTier)
-        changes.push(`**Boost-Level:** ${oldGuild.premiumTier} → ${newGuild.premiumTier}`);
+        changes.push(`**Boost Level:** ${oldGuild.premiumTier} → ${newGuild.premiumTier}`);
     if (oldGuild.vanityURLCode !== newGuild.vanityURLCode)
-        changes.push(`**Vanity-URL:** \`${oldGuild.vanityURLCode ?? 'Keine'}\` → \`${newGuild.vanityURLCode ?? 'Keine'}\``);
+        changes.push(`**Vanity URL:** \`${oldGuild.vanityURLCode ?? 'None'}\` → \`${newGuild.vanityURLCode ?? 'None'}\``);
 
     if (changes.length === 0) return;
 
     const embed = new EmbedBuilder()
-        .setTitle('⚙️ Server aktualisiert')
+        .setTitle('Server Updated')
         .setColor(0xffa500)
         .setTimestamp()
-        .addFields({ name: `📝 Änderungen (${changes.length})`, value: changes.join('\n').substring(0, 1024), inline: false })
+        .addFields({ name: `Changes (${changes.length})`, value: changes.join('\n').substring(0, 1024), inline: false })
         .setFooter({ text: `Server ID: ${newGuild.id}` });
 
     if (newGuild.iconURL()) embed.setThumbnail(newGuild.iconURL({ dynamic: true }));
@@ -911,18 +708,18 @@ async function logMemberNicknameChange(oldMember, newMember, bot) {
     const executor = await fetchAuditExecutor(newMember.guild, AuditLogEvent.MemberUpdate, newMember.id);
     const changedBy = executor && executor.id !== newMember.id
         ? fmtExecutor(executor)
-        : `${newMember.user} (selbst)\n\`${newMember.user.id}\``;
+        : `${newMember.user} (self)\n\`${newMember.user.id}\``;
 
     const embed = new EmbedBuilder()
-        .setTitle('✏️ Nickname geändert')
+        .setTitle('Nickname Changed')
         .setColor(0xffcc00)
         .setThumbnail(newMember.user.displayAvatarURL({ dynamic: true }))
         .setTimestamp()
         .addFields(
-            { name: '👤 Nutzer',       value: `${newMember.user} (${newMember.user.tag})\n\`${newMember.user.id}\``, inline: true },
-            { name: '✏️ Geändert von', value: changedBy,                                                              inline: true },
-            { name: '📝 Alt',          value: oldMember.nickname ?? `\`${oldMember.user.username}\``,                 inline: true },
-            { name: '📝 Neu',          value: newMember.nickname ?? `\`${newMember.user.username}\` (zurückgesetzt)`,  inline: true }
+            { name: 'User',       value: `${newMember.user} (${newMember.user.tag})\n\`${newMember.user.id}\``, inline: true },
+            { name: 'Changed by', value: changedBy,                                                              inline: true },
+            { name: 'Before',     value: oldMember.nickname ?? `\`${oldMember.user.username}\``,                 inline: true },
+            { name: 'After',      value: newMember.nickname ?? `\`${newMember.user.username}\` (reset)`,          inline: true }
         )
         .setFooter({ text: `User ID: ${newMember.user.id}` });
 
@@ -939,19 +736,19 @@ async function logMemberRoleChange(oldMember, newMember, bot) {
     const executor = await fetchAuditExecutor(newMember.guild, AuditLogEvent.MemberRoleUpdate, newMember.id);
 
     const embed = new EmbedBuilder()
-        .setTitle('🎭 Rollen aktualisiert')
+        .setTitle('Roles Updated')
         .setColor(addedRoles.size > 0 ? 0x57F287 : 0xED4245)
         .setThumbnail(newMember.user.displayAvatarURL({ dynamic: true }))
         .setTimestamp()
         .addFields(
-            { name: '👤 Nutzer',         value: `${newMember.user} (${newMember.user.tag})\n\`${newMember.user.id}\``, inline: true },
-            { name: '✏️ Geändert von',   value: fmtExecutor(executor),                                                 inline: true }
+            { name: 'User',       value: `${newMember.user} (${newMember.user.tag})\n\`${newMember.user.id}\``, inline: true },
+            { name: 'Changed by', value: fmtExecutor(executor),                                                  inline: true }
         );
 
     if (addedRoles.size > 0)
-        embed.addFields({ name: `✅ Hinzugefügt (${addedRoles.size})`, value: addedRoles.map(r => `${r} \`${r.name}\``).join('\n').substring(0, 1024), inline: false });
+        embed.addFields({ name: `Added (${addedRoles.size})`, value: addedRoles.map(r => `${r} \`${r.name}\``).join('\n').substring(0, 1024), inline: false });
     if (removedRoles.size > 0)
-        embed.addFields({ name: `❌ Entfernt (${removedRoles.size})`, value: removedRoles.map(r => `${r} \`${r.name}\``).join('\n').substring(0, 1024), inline: false });
+        embed.addFields({ name: `Removed (${removedRoles.size})`, value: removedRoles.map(r => `${r} \`${r.name}\``).join('\n').substring(0, 1024), inline: false });
 
     embed.setFooter({ text: `User ID: ${newMember.user.id}` });
 
@@ -966,38 +763,38 @@ async function logVoiceUpdate(oldState, newState, bot) {
     if (!member || member.user.bot) return;
 
     const changes = [];
-    let title = '🔊 Voice-Aktivität';
+    let title = 'Voice Activity';
     let color = 0x5865F2;
 
     if (!oldState.channelId && newState.channelId) {
-        title = '🎙️ Voice beigetreten';
+        title = 'Voice Joined';
         color = 0x57F287;
-        changes.push(`**Kanal:** ${newState.channel}`);
+        changes.push(`**Channel:** ${newState.channel}`);
     } else if (oldState.channelId && !newState.channelId) {
-        title = '🚪 Voice verlassen';
+        title = 'Voice Left';
         color = 0xED4245;
-        changes.push(`**Kanal:** ${oldState.channel}`);
+        changes.push(`**Channel:** ${oldState.channel}`);
     } else if (oldState.channelId && newState.channelId && oldState.channelId !== newState.channelId) {
-        title = '🔀 Voice gewechselt';
+        title = 'Voice Switched';
         color = 0xffa500;
-        changes.push(`**Von:** ${oldState.channel}`);
-        changes.push(`**Zu:** ${newState.channel}`);
+        changes.push(`**From:** ${oldState.channel}`);
+        changes.push(`**To:** ${newState.channel}`);
     } else {
         // State changes within same channel
         if (oldState.selfMute !== newState.selfMute)
-            changes.push(`**Mikro:** ${newState.selfMute ? '🔇 Stummgeschaltet' : '🎙️ Aktiv'}`);
+            changes.push(`**Mic:** ${newState.selfMute ? 'Muted' : 'Active'}`);
         if (oldState.selfDeaf !== newState.selfDeaf)
-            changes.push(`**Audio:** ${newState.selfDeaf ? '🔕 Taubgestellt' : '🔔 Aktiv'}`);
+            changes.push(`**Audio:** ${newState.selfDeaf ? 'Deafened' : 'Active'}`);
         if (oldState.serverMute !== newState.serverMute)
-            changes.push(`**Server-Mute:** ${newState.serverMute ? '🔇 An' : '🎙️ Aus'}`);
+            changes.push(`**Server Mute:** ${newState.serverMute ? 'On' : 'Off'}`);
         if (oldState.serverDeaf !== newState.serverDeaf)
-            changes.push(`**Server-Deaf:** ${newState.serverDeaf ? '🔕 An' : '🔔 Aus'}`);
+            changes.push(`**Server Deaf:** ${newState.serverDeaf ? 'On' : 'Off'}`);
         if (oldState.streaming !== newState.streaming)
-            changes.push(`**Stream:** ${newState.streaming ? '📺 Gestartet' : '⏹️ Gestoppt'}`);
+            changes.push(`**Stream:** ${newState.streaming ? 'Started' : 'Stopped'}`);
         if (oldState.selfVideo !== newState.selfVideo)
-            changes.push(`**Kamera:** ${newState.selfVideo ? '📷 An' : '📷 Aus'}`);
+            changes.push(`**Camera:** ${newState.selfVideo ? 'On' : 'Off'}`);
         if (changes.length === 0) return;
-        title = '⚙️ Voice-Status geändert';
+        title = 'Voice State Changed';
         color = 0xffcc00;
     }
 
@@ -1007,8 +804,8 @@ async function logVoiceUpdate(oldState, newState, bot) {
         .setThumbnail(member.user.displayAvatarURL({ dynamic: true }))
         .setTimestamp()
         .addFields(
-            { name: '👤 Nutzer', value: `${member.user} (${member.user.tag})\n\`${member.user.id}\``, inline: true },
-            { name: '📝 Details', value: changes.join('\n') || '—', inline: true }
+            { name: 'User',    value: `${member.user} (${member.user.tag})\n\`${member.user.id}\``, inline: true },
+            { name: 'Details', value: changes.join('\n') || '—', inline: true }
         )
         .setFooter({ text: `User ID: ${member.user.id}` });
 
@@ -1030,19 +827,19 @@ async function logBulkDelete(messages, channel, bot) {
         }
     });
     const authorList = [...authorCounts.entries()]
-        .map(([tag, count]) => `${tag} — ${count} Nachrichten`)
+        .map(([tag, count]) => `${tag} — ${count} messages`)
         .join('\n')
-        .substring(0, 1024) || 'Unbekannt (nicht gecacht)';
+        .substring(0, 1024) || 'Unknown (not cached)';
 
     const embed = new EmbedBuilder()
-        .setTitle('🗑️ Massenlöschung')
+        .setTitle('Bulk Delete')
         .setColor(0xff4500)
         .setTimestamp()
         .addFields(
-            { name: '📌 Kanal',        value: `${channel} \`${channel.name}\``,   inline: true },
-            { name: '🔢 Anzahl',       value: `${messages.size} Nachrichten`,      inline: true },
-            { name: '👤 Gelöscht von', value: fmtExecutor(executor),               inline: true },
-            { name: '👥 Betroffene Autoren', value: authorList,                    inline: false }
+            { name: 'Channel',    value: `${channel} \`${channel.name}\``,   inline: true },
+            { name: 'Count',      value: `${messages.size} messages`,         inline: true },
+            { name: 'Deleted by', value: fmtExecutor(executor),               inline: true },
+            { name: 'Authors',    value: authorList,                          inline: false }
         )
         .setFooter({ text: `Channel ID: ${channel.id}` });
 
@@ -1056,14 +853,14 @@ async function logEmojiCreate(emoji, bot) {
     const executor = await fetchAuditExecutor(emoji.guild, AuditLogEvent.EmojiCreate, emoji.id);
 
     const embed = new EmbedBuilder()
-        .setTitle('😄 Emoji hinzugefügt')
+        .setTitle('Emoji Added')
         .setColor(0x57F287)
         .setTimestamp()
         .addFields(
-            { name: '📛 Name',          value: `:${emoji.name}:`,                      inline: true },
-            { name: '🆔 ID',            value: `\`${emoji.id}\``,                      inline: true },
-            { name: '🎭 Typ',           value: emoji.animated ? 'Animiert' : 'Statisch', inline: true },
-            { name: '👤 Hinzugefügt von', value: fmtExecutor(executor),                inline: true }
+            { name: 'Name',     value: `:${emoji.name}:`,                         inline: true },
+            { name: 'ID',       value: `\`${emoji.id}\``,                         inline: true },
+            { name: 'Type',     value: emoji.animated ? 'Animated' : 'Static',   inline: true },
+            { name: 'Added by', value: fmtExecutor(executor),                     inline: true }
         )
         .setFooter({ text: `Emoji ID: ${emoji.id}` });
 
@@ -1077,13 +874,13 @@ async function logEmojiDelete(emoji, bot) {
     const executor = await fetchAuditExecutor(emoji.guild, AuditLogEvent.EmojiDelete, emoji.id);
 
     const embed = new EmbedBuilder()
-        .setTitle('😶 Emoji entfernt')
+        .setTitle('Emoji Removed')
         .setColor(0xED4245)
         .setTimestamp()
         .addFields(
-            { name: '📛 Name',         value: `:${emoji.name}:`,    inline: true },
-            { name: '🆔 ID',           value: `\`${emoji.id}\``,    inline: true },
-            { name: '👤 Entfernt von', value: fmtExecutor(executor), inline: true }
+            { name: 'Name',        value: `:${emoji.name}:`,    inline: true },
+            { name: 'ID',          value: `\`${emoji.id}\``,    inline: true },
+            { name: 'Removed by',  value: fmtExecutor(executor), inline: true }
         )
         .setFooter({ text: `Emoji ID: ${emoji.id}` });
 
@@ -1095,12 +892,12 @@ async function logEmojiUpdate(oldEmoji, newEmoji, bot) {
     if (oldEmoji.name === newEmoji.name) return;
 
     const embed = new EmbedBuilder()
-        .setTitle('✏️ Emoji umbenannt')
+        .setTitle('Emoji Renamed')
         .setColor(0xffcc00)
         .setTimestamp()
         .addFields(
-            { name: '📝 Alt', value: `:${oldEmoji.name}:`, inline: true },
-            { name: '📝 Neu', value: `:${newEmoji.name}:`, inline: true }
+            { name: 'Before', value: `:${oldEmoji.name}:`, inline: true },
+            { name: 'After',  value: `:${newEmoji.name}:`, inline: true }
         )
         .setFooter({ text: `Emoji ID: ${newEmoji.id}` });
 
@@ -1117,14 +914,14 @@ async function logStickerCreate(sticker, bot) {
     const executor = guild ? await fetchAuditExecutor(guild, AuditLogEvent.StickerCreate, sticker.id) : null;
 
     const embed = new EmbedBuilder()
-        .setTitle('🏷️ Sticker hinzugefügt')
+        .setTitle('Sticker Added')
         .setColor(0x57F287)
         .setTimestamp()
         .addFields(
-            { name: '📛 Name',            value: sticker.name,                    inline: true },
-            { name: '🆔 ID',              value: `\`${sticker.id}\``,             inline: true },
-            { name: '👤 Hinzugefügt von', value: fmtExecutor(executor),           inline: true },
-            { name: '📝 Beschreibung',    value: sticker.description || 'Keine',  inline: false }
+            { name: 'Name',        value: sticker.name,                      inline: true },
+            { name: 'ID',          value: `\`${sticker.id}\``,               inline: true },
+            { name: 'Added by',    value: fmtExecutor(executor),             inline: true },
+            { name: 'Description', value: sticker.description || 'None',    inline: false }
         )
         .setFooter({ text: `Sticker ID: ${sticker.id}` });
 
@@ -1137,13 +934,13 @@ async function logStickerDelete(sticker, bot) {
     const executor = guild ? await fetchAuditExecutor(guild, AuditLogEvent.StickerDelete, sticker.id) : null;
 
     const embed = new EmbedBuilder()
-        .setTitle('🏷️ Sticker entfernt')
+        .setTitle('Sticker Removed')
         .setColor(0xED4245)
         .setTimestamp()
         .addFields(
-            { name: '📛 Name',         value: sticker.name,        inline: true },
-            { name: '🆔 ID',           value: `\`${sticker.id}\``, inline: true },
-            { name: '👤 Entfernt von', value: fmtExecutor(executor), inline: true }
+            { name: 'Name',       value: sticker.name,         inline: true },
+            { name: 'ID',         value: `\`${sticker.id}\``,  inline: true },
+            { name: 'Removed by', value: fmtExecutor(executor), inline: true }
         )
         .setFooter({ text: `Sticker ID: ${sticker.id}` });
 
@@ -1156,14 +953,14 @@ async function logStickerUpdate(oldSticker, newSticker, bot) {
     if (oldSticker.name !== newSticker.name)
         changes.push(`**Name:** \`${oldSticker.name}\` → \`${newSticker.name}\``);
     if (oldSticker.description !== newSticker.description)
-        changes.push(`**Beschreibung:** ${oldSticker.description || 'Keine'} → ${newSticker.description || 'Keine'}`);
+        changes.push(`**Description:** ${oldSticker.description || 'None'} → ${newSticker.description || 'None'}`);
     if (changes.length === 0) return;
 
     const embed = new EmbedBuilder()
-        .setTitle('✏️ Sticker aktualisiert')
+        .setTitle('Sticker Updated')
         .setColor(0xffcc00)
         .setTimestamp()
-        .addFields({ name: '📝 Änderungen', value: changes.join('\n'), inline: false })
+        .addFields({ name: 'Changes', value: changes.join('\n'), inline: false })
         .setFooter({ text: `Sticker ID: ${newSticker.id}` });
 
     const logChannel = await getLogChannel(bot, bot.CONFIG.ROLE_LOG_CHANNEL);
@@ -1174,15 +971,15 @@ async function logStickerUpdate(oldSticker, newSticker, bot) {
 
 async function logInviteCreate(invite, bot) {
     const embed = new EmbedBuilder()
-        .setTitle('🔗 Einladung erstellt')
+        .setTitle('Invite Created')
         .setColor(0x57F287)
         .setTimestamp()
         .addFields(
-            { name: '🔑 Code',     value: `\`${invite.code}\``,                                              inline: true },
-            { name: '👤 Erstellt', value: invite.inviter?.toString() ?? 'Unbekannt',                          inline: true },
-            { name: '📌 Kanal',    value: invite.channel?.toString() ?? 'Unbekannt',                          inline: true },
-            { name: '⏱️ Läuft ab', value: invite.expiresAt ? `<t:${Math.floor(invite.expiresTimestamp / 1000)}:F>` : 'Nie', inline: true },
-            { name: '🔢 Max. Nutzungen', value: invite.maxUses ? `${invite.maxUses}` : '∞',                  inline: true }
+            { name: 'Code',      value: `\`${invite.code}\``,                                                          inline: true },
+            { name: 'Created by', value: invite.inviter?.toString() ?? 'Unknown',                                      inline: true },
+            { name: 'Channel',   value: invite.channel?.toString() ?? 'Unknown',                                        inline: true },
+            { name: 'Expires',   value: invite.expiresAt ? `<t:${Math.floor(invite.expiresTimestamp / 1000)}:F>` : 'Never', inline: true },
+            { name: 'Max Uses',  value: invite.maxUses ? `${invite.maxUses}` : '∞',                                    inline: true }
         )
         .setFooter({ text: `Invite Code: ${invite.code}` });
 
@@ -1192,12 +989,12 @@ async function logInviteCreate(invite, bot) {
 
 async function logInviteDelete(invite, bot) {
     const embed = new EmbedBuilder()
-        .setTitle('🔗 Einladung gelöscht')
+        .setTitle('Invite Deleted')
         .setColor(0xED4245)
         .setTimestamp()
         .addFields(
-            { name: '🔑 Code',  value: `\`${invite.code}\``,                 inline: true },
-            { name: '📌 Kanal', value: invite.channel?.toString() ?? 'Unbekannt', inline: true }
+            { name: 'Code',    value: `\`${invite.code}\``,                      inline: true },
+            { name: 'Channel', value: invite.channel?.toString() ?? 'Unknown',   inline: true }
         )
         .setFooter({ text: `Invite Code: ${invite.code}` });
 
@@ -1211,14 +1008,14 @@ async function logThreadCreate(thread, bot) {
     const executor = await fetchAuditExecutor(thread.guild, AuditLogEvent.ThreadCreate, thread.id);
 
     const embed = new EmbedBuilder()
-        .setTitle('🧵 Thread erstellt')
+        .setTitle('Thread Created')
         .setColor(0x57F287)
         .setTimestamp()
         .addFields(
-            { name: '📛 Name',          value: thread.name,                              inline: true },
-            { name: '🆔 ID',            value: `\`${thread.id}\``,                       inline: true },
-            { name: '📌 In',            value: thread.parent?.toString() ?? 'Unbekannt',  inline: true },
-            { name: '👤 Erstellt von',  value: fmtExecutor(executor),                    inline: true }
+            { name: 'Name',       value: thread.name,                             inline: true },
+            { name: 'ID',         value: `\`${thread.id}\``,                      inline: true },
+            { name: 'In',         value: thread.parent?.toString() ?? 'Unknown',  inline: true },
+            { name: 'Created by', value: fmtExecutor(executor),                   inline: true }
         )
         .setFooter({ text: `Thread ID: ${thread.id}` });
 
@@ -1230,13 +1027,13 @@ async function logThreadDelete(thread, bot) {
     const executor = await fetchAuditExecutor(thread.guild, AuditLogEvent.ThreadDelete, thread.id);
 
     const embed = new EmbedBuilder()
-        .setTitle('🧵 Thread gelöscht')
+        .setTitle('Thread Deleted')
         .setColor(0xED4245)
         .setTimestamp()
         .addFields(
-            { name: '📛 Name',         value: thread.name,         inline: true },
-            { name: '🆔 ID',           value: `\`${thread.id}\``,  inline: true },
-            { name: '👤 Gelöscht von', value: fmtExecutor(executor), inline: true }
+            { name: 'Name',       value: thread.name,          inline: true },
+            { name: 'ID',         value: `\`${thread.id}\``,   inline: true },
+            { name: 'Deleted by', value: fmtExecutor(executor), inline: true }
         )
         .setFooter({ text: `Thread ID: ${thread.id}` });
 
@@ -1249,18 +1046,18 @@ async function logThreadUpdate(oldThread, newThread, bot) {
     if (oldThread.name !== newThread.name)
         changes.push(`**Name:** \`${oldThread.name}\` → \`${newThread.name}\``);
     if (oldThread.archived !== newThread.archived)
-        changes.push(`**Archiviert:** ${oldThread.archived ? 'Ja' : 'Nein'} → ${newThread.archived ? 'Ja' : 'Nein'}`);
+        changes.push(`**Archived:** ${oldThread.archived ? 'Yes' : 'No'} → ${newThread.archived ? 'Yes' : 'No'}`);
     if (oldThread.locked !== newThread.locked)
-        changes.push(`**Gesperrt:** ${oldThread.locked ? 'Ja' : 'Nein'} → ${newThread.locked ? 'Ja' : 'Nein'}`);
+        changes.push(`**Locked:** ${oldThread.locked ? 'Yes' : 'No'} → ${newThread.locked ? 'Yes' : 'No'}`);
     if (changes.length === 0) return;
 
     const embed = new EmbedBuilder()
-        .setTitle('✏️ Thread aktualisiert')
+        .setTitle('Thread Updated')
         .setColor(0xffcc00)
         .setTimestamp()
         .addFields(
-            { name: '📛 Thread', value: `${newThread} \`${newThread.name}\``, inline: true },
-            { name: '📝 Änderungen', value: changes.join('\n'), inline: false }
+            { name: 'Thread',  value: `${newThread} \`${newThread.name}\``, inline: true },
+            { name: 'Changes', value: changes.join('\n'),                   inline: false }
         )
         .setFooter({ text: `Thread ID: ${newThread.id}` });
 
@@ -1285,14 +1082,14 @@ async function logReactionAdd(reaction, user, bot) {
         : reaction.emoji.name;
 
     const embed = new EmbedBuilder()
-        .setTitle('👍 Reaktion hinzugefügt')
+        .setTitle('Reaction Added')
         .setColor(0x57F287)
         .setTimestamp()
         .addFields(
-            { name: '👤 Nutzer',    value: `${user} (${user.tag})\n\`${user.id}\``,           inline: true },
-            { name: '😀 Emoji',     value: emoji,                                               inline: true },
-            { name: '📌 Kanal',     value: `${reaction.message.channel}`,                       inline: true },
-            { name: '🔗 Nachricht', value: `[Zur Nachricht](${reaction.message.url})`,          inline: true }
+            { name: 'User',    value: `${user} (${user.tag})\n\`${user.id}\``,             inline: true },
+            { name: 'Emoji',   value: emoji,                                                 inline: true },
+            { name: 'Channel', value: `${reaction.message.channel}`,                         inline: true },
+            { name: 'Message', value: `[Jump to message](${reaction.message.url})`,          inline: true }
         )
         .setFooter({ text: `Message ID: ${reaction.message.id}` });
 
@@ -1315,14 +1112,14 @@ async function logReactionRemove(reaction, user, bot) {
         : reaction.emoji.name;
 
     const embed = new EmbedBuilder()
-        .setTitle('👎 Reaktion entfernt')
+        .setTitle('Reaction Removed')
         .setColor(0xED4245)
         .setTimestamp()
         .addFields(
-            { name: '👤 Nutzer',    value: `${user} (${user.tag})\n\`${user.id}\``,           inline: true },
-            { name: '😀 Emoji',     value: emoji,                                               inline: true },
-            { name: '📌 Kanal',     value: `${reaction.message.channel}`,                       inline: true },
-            { name: '🔗 Nachricht', value: `[Zur Nachricht](${reaction.message.url})`,          inline: true }
+            { name: 'User',    value: `${user} (${user.tag})\n\`${user.id}\``,             inline: true },
+            { name: 'Emoji',   value: emoji,                                                 inline: true },
+            { name: 'Channel', value: `${reaction.message.channel}`,                         inline: true },
+            { name: 'Message', value: `[Jump to message](${reaction.message.url})`,          inline: true }
         )
         .setFooter({ text: `Message ID: ${reaction.message.id}` });
 
@@ -1333,25 +1130,25 @@ async function logReactionRemove(reaction, user, bot) {
 // ── Scheduled Event logs ──────────────────────────────────────────────────────
 
 function scheduledEventStatusName(status) {
-    const map = { 1: 'Geplant', 2: 'Aktiv', 3: 'Abgeschlossen', 4: 'Abgebrochen' };
-    return map[status] ?? `Unbekannt (${status})`;
+    const map = { 1: 'Scheduled', 2: 'Active', 3: 'Completed', 4: 'Cancelled' };
+    return map[status] ?? `Unknown (${status})`;
 }
 
 async function logScheduledEventCreate(event, bot) {
     const embed = new EmbedBuilder()
-        .setTitle('📅 Server-Event erstellt')
+        .setTitle('Event Created')
         .setColor(0x57F287)
         .setTimestamp()
         .addFields(
-            { name: '📛 Name',      value: event.name,                                                                                          inline: true },
-            { name: '🆔 ID',        value: `\`${event.id}\``,                                                                                   inline: true },
-            { name: '👤 Ersteller', value: event.creator?.toString() ?? 'Unbekannt',                                                            inline: true },
-            { name: '⏰ Start',     value: event.scheduledStartTimestamp ? `<t:${Math.floor(event.scheduledStartTimestamp / 1000)}:F>` : 'Unbekannt', inline: true },
-            { name: '⏱️ Ende',     value: event.scheduledEndTimestamp   ? `<t:${Math.floor(event.scheduledEndTimestamp / 1000)}:F>`   : 'Kein Ende',  inline: true }
+            { name: 'Name',       value: event.name,                                                                                             inline: true },
+            { name: 'ID',         value: `\`${event.id}\``,                                                                                      inline: true },
+            { name: 'Created by', value: event.creator?.toString() ?? 'Unknown',                                                                 inline: true },
+            { name: 'Starts',     value: event.scheduledStartTimestamp ? `<t:${Math.floor(event.scheduledStartTimestamp / 1000)}:F>` : 'Unknown', inline: true },
+            { name: 'Ends',       value: event.scheduledEndTimestamp   ? `<t:${Math.floor(event.scheduledEndTimestamp / 1000)}:F>`   : 'No end',   inline: true }
         )
         .setFooter({ text: `Event ID: ${event.id}` });
 
-    if (event.description) embed.addFields({ name: '📝 Beschreibung', value: event.description.substring(0, 1024), inline: false });
+    if (event.description) embed.addFields({ name: 'Description', value: event.description.substring(0, 1024), inline: false });
     if (event.coverImageURL()) embed.setThumbnail(event.coverImageURL());
 
     const logChannel = await getLogChannel(bot, bot.CONFIG.LOG_CHANNEL);
@@ -1363,7 +1160,7 @@ async function logScheduledEventUpdate(oldEvent, newEvent, bot) {
     if (oldEvent.name !== newEvent.name)
         changes.push(`**Name:** \`${oldEvent.name}\` → \`${newEvent.name}\``);
     if (oldEvent.description !== newEvent.description)
-        changes.push(`**Beschreibung:** Geändert`);
+        changes.push(`**Description:** Updated`);
     if (oldEvent.status !== newEvent.status)
         changes.push(`**Status:** ${scheduledEventStatusName(oldEvent.status)} → ${scheduledEventStatusName(newEvent.status)}`);
     if (oldEvent.scheduledStartTimestamp !== newEvent.scheduledStartTimestamp)
@@ -1371,13 +1168,13 @@ async function logScheduledEventUpdate(oldEvent, newEvent, bot) {
     if (changes.length === 0) return;
 
     const embed = new EmbedBuilder()
-        .setTitle('📅 Server-Event aktualisiert')
+        .setTitle('Event Updated')
         .setColor(0xffcc00)
         .setTimestamp()
         .addFields(
-            { name: '📛 Event',                         value: `\`${newEvent.name}\``,                   inline: true },
-            { name: '🆔 ID',                            value: `\`${newEvent.id}\``,                     inline: true },
-            { name: `📝 Änderungen (${changes.length})`, value: changes.join('\n').substring(0, 1024),   inline: false }
+            { name: 'Event',                      value: `\`${newEvent.name}\``,                   inline: true },
+            { name: 'ID',                         value: `\`${newEvent.id}\``,                     inline: true },
+            { name: `Changes (${changes.length})`, value: changes.join('\n').substring(0, 1024),   inline: false }
         )
         .setFooter({ text: `Event ID: ${newEvent.id}` });
 
@@ -1387,12 +1184,12 @@ async function logScheduledEventUpdate(oldEvent, newEvent, bot) {
 
 async function logScheduledEventDelete(event, bot) {
     const embed = new EmbedBuilder()
-        .setTitle('📅 Server-Event gelöscht')
+        .setTitle('Event Deleted')
         .setColor(0xED4245)
         .setTimestamp()
         .addFields(
-            { name: '📛 Name', value: event.name,        inline: true },
-            { name: '🆔 ID',   value: `\`${event.id}\``, inline: true }
+            { name: 'Name', value: event.name,        inline: true },
+            { name: 'ID',   value: `\`${event.id}\``, inline: true }
         )
         .setFooter({ text: `Event ID: ${event.id}` });
 
@@ -1404,12 +1201,12 @@ async function logScheduledEventDelete(event, bot) {
 
 async function logWebhookUpdate(channel, bot) {
     const embed = new EmbedBuilder()
-        .setTitle('🔗 Webhook geändert')
+        .setTitle('Webhook Updated')
         .setColor(0xffcc00)
         .setTimestamp()
         .addFields(
-            { name: '📌 Kanal', value: `${channel} \`${channel.name}\``, inline: true },
-            { name: '🆔 ID',    value: `\`${channel.id}\``,               inline: true }
+            { name: 'Channel', value: `${channel} \`${channel.name}\``, inline: true },
+            { name: 'ID',      value: `\`${channel.id}\``,               inline: true }
         )
         .setFooter({ text: `Channel ID: ${channel.id}` });
 
@@ -1421,12 +1218,12 @@ async function logWebhookUpdate(channel, bot) {
 
 async function logStageCreate(stageInstance, bot) {
     const embed = new EmbedBuilder()
-        .setTitle('🎭 Stage gestartet')
+        .setTitle('Stage Started')
         .setColor(0x57F287)
         .setTimestamp()
         .addFields(
-            { name: '📋 Thema', value: stageInstance.topic || 'Kein Thema', inline: true },
-            { name: '🆔 ID',    value: `\`${stageInstance.id}\``,            inline: true }
+            { name: 'Topic', value: stageInstance.topic || 'No topic', inline: true },
+            { name: 'ID',    value: `\`${stageInstance.id}\``,          inline: true }
         )
         .setFooter({ text: `Stage ID: ${stageInstance.id}` });
 
@@ -1438,12 +1235,12 @@ async function logStageUpdate(oldStage, newStage, bot) {
     if (oldStage.topic === newStage.topic) return;
 
     const embed = new EmbedBuilder()
-        .setTitle('🎭 Stage aktualisiert')
+        .setTitle('Stage Updated')
         .setColor(0xffcc00)
         .setTimestamp()
         .addFields(
-            { name: '📋 Alt', value: oldStage.topic || 'Kein Thema', inline: true },
-            { name: '📋 Neu', value: newStage.topic || 'Kein Thema', inline: true }
+            { name: 'Before', value: oldStage.topic || 'No topic', inline: true },
+            { name: 'After',  value: newStage.topic || 'No topic', inline: true }
         )
         .setFooter({ text: `Stage ID: ${newStage.id}` });
 
@@ -1453,12 +1250,12 @@ async function logStageUpdate(oldStage, newStage, bot) {
 
 async function logStageDelete(stageInstance, bot) {
     const embed = new EmbedBuilder()
-        .setTitle('🎭 Stage beendet')
+        .setTitle('Stage Ended')
         .setColor(0xED4245)
         .setTimestamp()
         .addFields(
-            { name: '📋 Thema', value: stageInstance.topic || 'Kein Thema', inline: true },
-            { name: '🆔 ID',    value: `\`${stageInstance.id}\``,            inline: true }
+            { name: 'Topic', value: stageInstance.topic || 'No topic', inline: true },
+            { name: 'ID',    value: `\`${stageInstance.id}\``,          inline: true }
         )
         .setFooter({ text: `Stage ID: ${stageInstance.id}` });
 
@@ -1470,13 +1267,13 @@ async function logStageDelete(stageInstance, bot) {
 
 async function logAutoModRuleCreate(rule, bot) {
     const embed = new EmbedBuilder()
-        .setTitle('🛡️ Auto-Mod Regel erstellt')
+        .setTitle('AutoMod Rule Created')
         .setColor(0x57F287)
         .setTimestamp()
         .addFields(
-            { name: '📛 Name',   value: rule.name,                        inline: true },
-            { name: '🆔 ID',    value: `\`${rule.id}\``,                  inline: true },
-            { name: '✅ Aktiv', value: rule.enabled ? 'Ja' : 'Nein',     inline: true }
+            { name: 'Name',   value: rule.name,                        inline: true },
+            { name: 'ID',     value: `\`${rule.id}\``,                  inline: true },
+            { name: 'Active', value: rule.enabled ? 'Yes' : 'No',      inline: true }
         )
         .setFooter({ text: `Rule ID: ${rule.id}` });
 
@@ -1486,12 +1283,12 @@ async function logAutoModRuleCreate(rule, bot) {
 
 async function logAutoModRuleDelete(rule, bot) {
     const embed = new EmbedBuilder()
-        .setTitle('🛡️ Auto-Mod Regel gelöscht')
+        .setTitle('AutoMod Rule Deleted')
         .setColor(0xED4245)
         .setTimestamp()
         .addFields(
-            { name: '📛 Name', value: rule.name,        inline: true },
-            { name: '🆔 ID',   value: `\`${rule.id}\``, inline: true }
+            { name: 'Name', value: rule.name,        inline: true },
+            { name: 'ID',   value: `\`${rule.id}\``, inline: true }
         )
         .setFooter({ text: `Rule ID: ${rule.id}` });
 
@@ -1504,17 +1301,17 @@ async function logAutoModRuleUpdate(oldRule, newRule, bot) {
     if (oldRule.name !== newRule.name)
         changes.push(`**Name:** \`${oldRule.name}\` → \`${newRule.name}\``);
     if (oldRule.enabled !== newRule.enabled)
-        changes.push(`**Aktiv:** ${oldRule.enabled ? 'Ja' : 'Nein'} → ${newRule.enabled ? 'Ja' : 'Nein'}`);
+        changes.push(`**Active:** ${oldRule.enabled ? 'Yes' : 'No'} → ${newRule.enabled ? 'Yes' : 'No'}`);
     if (changes.length === 0) return;
 
     const embed = new EmbedBuilder()
-        .setTitle('🛡️ Auto-Mod Regel aktualisiert')
+        .setTitle('AutoMod Rule Updated')
         .setColor(0xffcc00)
         .setTimestamp()
         .addFields(
-            { name: '📛 Regel',       value: `\`${newRule.name}\``,    inline: true },
-            { name: '🆔 ID',          value: `\`${newRule.id}\``,      inline: true },
-            { name: '📝 Änderungen',  value: changes.join('\n'),       inline: false }
+            { name: 'Rule',    value: `\`${newRule.name}\``,    inline: true },
+            { name: 'ID',      value: `\`${newRule.id}\``,      inline: true },
+            { name: 'Changes', value: changes.join('\n'),       inline: false }
         )
         .setFooter({ text: `Rule ID: ${newRule.id}` });
 
@@ -1525,40 +1322,40 @@ async function logAutoModRuleUpdate(oldRule, newRule, bot) {
 async function logAutoModActionExecution(execution, bot) {
     if (execution.guild?.id !== bot.CONFIG.GUILD_ID) return;
 
-    const actionTypeNames = { 1: 'Nachricht blockiert', 2: 'Alert gesendet', 3: 'Timeout' };
-    const actionType = actionTypeNames[execution.action?.type] ?? `Unbekannt (${execution.action?.type})`;
+    const actionTypeNames = { 1: 'Message blocked', 2: 'Alert sent', 3: 'Timeout' };
+    const actionType = actionTypeNames[execution.action?.type] ?? `Unknown (${execution.action?.type})`;
 
     const embed = new EmbedBuilder()
-        .setTitle('🛡️ Auto-Mod ausgelöst')
+        .setTitle('AutoMod Triggered')
         .setColor(0xff8c00)
         .setTimestamp()
         .addFields(
-            { name: '👤 Nutzer',  value: `<@${execution.userId}> \`${execution.userId}\``,               inline: true },
-            { name: '⚡ Aktion', value: actionType,                                                        inline: true },
-            { name: '📌 Kanal',  value: execution.channelId ? `<#${execution.channelId}>` : 'Unbekannt', inline: true }
+            { name: 'User',    value: `<@${execution.userId}> \`${execution.userId}\``,                inline: true },
+            { name: 'Action',  value: actionType,                                                        inline: true },
+            { name: 'Channel', value: execution.channelId ? `<#${execution.channelId}>` : 'Unknown',   inline: true }
         )
         .setFooter({ text: `Rule ID: ${execution.ruleId}` });
 
     if (execution.content) {
         embed.addFields({
-            name: '📝 Inhalt',
+            name: 'Content',
             value: execution.content.length > 1024 ? execution.content.substring(0, 1020) + '…' : execution.content,
             inline: false
         });
     }
     if (execution.matchedContent) {
-        embed.addFields({ name: '🚨 Erkannter Inhalt', value: `\`${execution.matchedContent.substring(0, 200)}\``, inline: false });
+        embed.addFields({ name: 'Matched content', value: `\`${execution.matchedContent.substring(0, 200)}\``, inline: false });
     }
 
     const logChannel = await getLogChannel(bot, bot.CONFIG.LOG_CHANNEL);
     if (logChannel) await logChannel.send({ embeds: [embed] });
 }
 
-// Haupt-Event-Handler Registrierung
+// Main event handler registration
 function registerEventHandlers(bot) {
     bot.applicationHandler = new ApplicationHandler(bot);
 
-    // Nur EINEN ready Event-Listener verwenden
+    // Single ready event listener
     bot.client.once('ready', async () => {
         console.log(`${bot.client.user.tag} is ready!`);
         
@@ -1570,7 +1367,7 @@ function registerEventHandlers(bot) {
         
         setInterval(() => bot.applicationHandler.checkSessions(), 60 * 1000);
         
-        bot.client.user.setActivity('applications', { type: 'WATCHING' });
+        
         
         console.log('All systems initialized successfully');
 
@@ -1586,16 +1383,16 @@ function registerEventHandlers(bot) {
             ['TRANSCRIPT_CHANNEL',          bot.CONFIG.TRANSCRIPT_CHANNEL],
         ];
 
-        console.log('\n=== Kanal-Status-Check ===');
+        console.log('\n=== Channel check ===');
         for (const [name, id] of channelChecks) {
             const ch = await getLogChannel(bot, id);
             if (ch) {
-                console.log(`  ✅ ${name}: #${ch.name} (${id})`);
+                console.log(`  ✓ ${name}: #${ch.name}`);
             } else {
-                console.error(`  ❌ ${name}: NICHT GEFUNDEN oder kein Zugriff (ID: ${id})`);
+                console.error(`  ✗ ${name}: not found (${id})`);
             }
         }
-        console.log('=========================\n');
+        console.log('=====================\n');
     });
 
     bot.client.on('interactionCreate', async (interaction) => {
@@ -1675,7 +1472,7 @@ function registerEventHandlers(bot) {
             await handleCommand(interaction, bot);
         }
       } catch (err) {
-          console.error('[interactionCreate] Unbehandelter Fehler:', err);
+          console.error('[interactionCreate] unhandled error:', err);
           try {
               const reply = { content: MSG.GENERIC_ERROR, ephemeral: true };
               if (interaction.deferred || interaction.replied) {
@@ -1715,29 +1512,24 @@ function registerEventHandlers(bot) {
                 if (welcomeChannel) {
                     const accountAgeDays = Math.floor((Date.now() - member.user.createdTimestamp) / 86400000);
                     const welcomeEmbed = new EmbedBuilder()
-                        .setTitle('👋 Willkommen!')
-                        .setDescription(`Hey ${member.user}! Willkommen auf **${member.guild.name}**!\n\nSchau dir die Regeln an und fühl dich wie zu Hause. ✨`)
+                        .setDescription(MSG.WELCOME_BODY(member.user.toString(), member.guild.name))
                         .setThumbnail(member.user.displayAvatarURL({ dynamic: true, size: 256 }))
                         .setColor(0x57F287)
                         .setTimestamp()
-                        .addFields(
-                            { name: '👤 Nutzer', value: `${member.user.tag}`, inline: true },
-                            { name: '📅 Account erstellt', value: `<t:${Math.floor(member.user.createdTimestamp / 1000)}:R>`, inline: true },
-                            { name: '👥 Mitglied Nr.', value: `#${member.guild.memberCount}`, inline: true }
-                        );
+                        .setFooter({ text: MSG.WELCOME_FOOTER(member.guild.memberCount) });
                     await welcomeChannel.send({ embeds: [welcomeEmbed] });
                 } else {
-                    console.error('[guildMemberAdd] WELCOME_CHANNEL nicht gefunden:', bot.CONFIG.WELCOME_CHANNEL);
+                    console.error('[guildMemberAdd] WELCOME_CHANNEL not found:', bot.CONFIG.WELCOME_CHANNEL);
                 }
             } catch (err) {
-                console.error('[guildMemberAdd] Willkommensnachricht fehlgeschlagen:', err);
+                console.error('[guildMemberAdd] welcome message failed:', err);
             }
         }
 
         try {
             await logMemberJoin(member, bot);
         } catch (err) {
-            console.error('[guildMemberAdd] logMemberJoin fehlgeschlagen:', err);
+            console.error('[guildMemberAdd] logMemberJoin failed:', err);
         }
     });
 
@@ -1747,7 +1539,7 @@ function registerEventHandlers(bot) {
         try {
             await logMemberLeave(member, bot);
         } catch (err) {
-            console.error('[guildMemberRemove] logMemberLeave fehlgeschlagen:', err);
+            console.error('[guildMemberRemove] logMemberLeave failed:', err);
         }
 
         // Check if it was a kick (not a ban or leave)
@@ -1764,7 +1556,7 @@ function registerEventHandlers(bot) {
                 }, 'kick', bot);
             }
         } catch (error) {
-            console.error('[guildMemberRemove] Kick audit log Fehler:', error);
+            console.error('[guildMemberRemove] kick audit log error:', error);
         }
     });
 
@@ -1816,7 +1608,7 @@ function registerEventHandlers(bot) {
         // Nickname change
         if (oldMember.nickname !== newMember.nickname) {
             try { await logMemberNicknameChange(oldMember, newMember, bot); }
-            catch (err) { console.error('[guildMemberUpdate] logMemberNicknameChange Fehler:', err); }
+            catch (err) { console.error('[guildMemberUpdate] logMemberNicknameChange error:', err); }
         }
 
         // Role change
@@ -1824,7 +1616,7 @@ function registerEventHandlers(bot) {
         const newRoleIds = newMember.roles.cache.map(r => r.id).sort().join(',');
         if (oldRoleIds !== newRoleIds) {
             try { await logMemberRoleChange(oldMember, newMember, bot); }
-            catch (err) { console.error('[guildMemberUpdate] logMemberRoleChange Fehler:', err); }
+            catch (err) { console.error('[guildMemberUpdate] logMemberRoleChange error:', err); }
         }
     });
 
@@ -1864,14 +1656,14 @@ function registerEventHandlers(bot) {
     bot.client.on('messageDelete', async (message) => {
         if (message.guild && message.guild.id === bot.CONFIG.GUILD_ID) {
             try { await logMessageDelete(message, bot); }
-            catch (err) { console.error('[messageDelete] Fehler:', err); }
+            catch (err) { console.error('[messageDelete] error:', err); }
         }
     });
 
     bot.client.on('messageUpdate', async (oldMessage, newMessage) => {
         if (newMessage.guild && newMessage.guild.id === bot.CONFIG.GUILD_ID) {
             try { await logMessageUpdate(oldMessage, newMessage, bot); }
-            catch (err) { console.error('[messageUpdate] Fehler:', err); }
+            catch (err) { console.error('[messageUpdate] error:', err); }
         }
     });
 
@@ -1879,21 +1671,21 @@ function registerEventHandlers(bot) {
     bot.client.on('channelCreate', async (channel) => {
         if (channel.guild && channel.guild.id === bot.CONFIG.GUILD_ID) {
             try { await logChannelCreate(channel, bot); }
-            catch (err) { console.error('[channelCreate] Fehler:', err); }
+            catch (err) { console.error('[channelCreate] error:', err); }
         }
     });
 
     bot.client.on('channelDelete', async (channel) => {
         if (channel.guild && channel.guild.id === bot.CONFIG.GUILD_ID) {
             try { await logChannelDelete(channel, bot); }
-            catch (err) { console.error('[channelDelete] Fehler:', err); }
+            catch (err) { console.error('[channelDelete] error:', err); }
         }
     });
 
     bot.client.on('channelUpdate', async (oldChannel, newChannel) => {
         if (newChannel.guild && newChannel.guild.id === bot.CONFIG.GUILD_ID) {
             try { await logChannelUpdate(oldChannel, newChannel, bot); }
-            catch (err) { console.error('[channelUpdate] Fehler:', err); }
+            catch (err) { console.error('[channelUpdate] error:', err); }
         }
     });
 
@@ -1901,49 +1693,49 @@ function registerEventHandlers(bot) {
     bot.client.on('roleCreate', async (role) => {
         if (role.guild.id === bot.CONFIG.GUILD_ID) {
             try { await logRoleCreate(role, bot); }
-            catch (err) { console.error('[roleCreate] Fehler:', err); }
+            catch (err) { console.error('[roleCreate] error:', err); }
         }
     });
 
     bot.client.on('roleDelete', async (role) => {
         if (role.guild.id === bot.CONFIG.GUILD_ID) {
             try { await logRoleDelete(role, bot); }
-            catch (err) { console.error('[roleDelete] Fehler:', err); }
+            catch (err) { console.error('[roleDelete] error:', err); }
         }
     });
 
     bot.client.on('roleUpdate', async (oldRole, newRole) => {
         if (newRole.guild.id === bot.CONFIG.GUILD_ID) {
             try { await logRoleUpdate(oldRole, newRole, bot); }
-            catch (err) { console.error('[roleUpdate] Fehler:', err); }
+            catch (err) { console.error('[roleUpdate] error:', err); }
         }
     });
 
     // User logging events
     bot.client.on('userUpdate', async (oldUser, newUser) => {
         try { await logUserUpdate(oldUser, newUser, bot); }
-        catch (err) { console.error('[userUpdate] Fehler:', err); }
+        catch (err) { console.error('[userUpdate] error:', err); }
     });
 
     // Guild (server) update
     bot.client.on('guildUpdate', async (oldGuild, newGuild) => {
         if (newGuild.id !== bot.CONFIG.GUILD_ID) return;
         try { await logGuildUpdate(oldGuild, newGuild, bot); }
-        catch (err) { console.error('[guildUpdate] Fehler:', err); }
+        catch (err) { console.error('[guildUpdate] error:', err); }
     });
 
     // Voice state logging
     bot.client.on('voiceStateUpdate', async (oldState, newState) => {
         if ((newState.guild ?? oldState.guild)?.id !== bot.CONFIG.GUILD_ID) return;
         try { await logVoiceUpdate(oldState, newState, bot); }
-        catch (err) { console.error('[voiceStateUpdate] Fehler:', err); }
+        catch (err) { console.error('[voiceStateUpdate] error:', err); }
     });
 
     // Bulk message delete
     bot.client.on('messageDeleteBulk', async (messages, channel) => {
         if (channel.guild && channel.guild.id === bot.CONFIG.GUILD_ID) {
             try { await logBulkDelete(messages, channel, bot); }
-            catch (err) { console.error('[messageDeleteBulk] Fehler:', err); }
+            catch (err) { console.error('[messageDeleteBulk] error:', err); }
         }
     });
 
@@ -1951,150 +1743,150 @@ function registerEventHandlers(bot) {
     bot.client.on('emojiCreate', async (emoji) => {
         if (emoji.guild.id !== bot.CONFIG.GUILD_ID) return;
         try { await logEmojiCreate(emoji, bot); }
-        catch (err) { console.error('[emojiCreate] Fehler:', err); }
+        catch (err) { console.error('[emojiCreate] error:', err); }
     });
 
     bot.client.on('emojiDelete', async (emoji) => {
         if (emoji.guild.id !== bot.CONFIG.GUILD_ID) return;
         try { await logEmojiDelete(emoji, bot); }
-        catch (err) { console.error('[emojiDelete] Fehler:', err); }
+        catch (err) { console.error('[emojiDelete] error:', err); }
     });
 
     bot.client.on('emojiUpdate', async (oldEmoji, newEmoji) => {
         if (newEmoji.guild.id !== bot.CONFIG.GUILD_ID) return;
         try { await logEmojiUpdate(oldEmoji, newEmoji, bot); }
-        catch (err) { console.error('[emojiUpdate] Fehler:', err); }
+        catch (err) { console.error('[emojiUpdate] error:', err); }
     });
 
     // Sticker events
     bot.client.on('stickerCreate', async (sticker) => {
         if (sticker.guildId !== bot.CONFIG.GUILD_ID) return;
         try { await logStickerCreate(sticker, bot); }
-        catch (err) { console.error('[stickerCreate] Fehler:', err); }
+        catch (err) { console.error('[stickerCreate] error:', err); }
     });
 
     bot.client.on('stickerDelete', async (sticker) => {
         if (sticker.guildId !== bot.CONFIG.GUILD_ID) return;
         try { await logStickerDelete(sticker, bot); }
-        catch (err) { console.error('[stickerDelete] Fehler:', err); }
+        catch (err) { console.error('[stickerDelete] error:', err); }
     });
 
     bot.client.on('stickerUpdate', async (oldSticker, newSticker) => {
         if (newSticker.guildId !== bot.CONFIG.GUILD_ID) return;
         try { await logStickerUpdate(oldSticker, newSticker, bot); }
-        catch (err) { console.error('[stickerUpdate] Fehler:', err); }
+        catch (err) { console.error('[stickerUpdate] error:', err); }
     });
 
     // Invite events
     bot.client.on('inviteCreate', async (invite) => {
         if (invite.guild?.id !== bot.CONFIG.GUILD_ID) return;
         try { await logInviteCreate(invite, bot); }
-        catch (err) { console.error('[inviteCreate] Fehler:', err); }
+        catch (err) { console.error('[inviteCreate] error:', err); }
     });
 
     bot.client.on('inviteDelete', async (invite) => {
         if (invite.guild?.id !== bot.CONFIG.GUILD_ID) return;
         try { await logInviteDelete(invite, bot); }
-        catch (err) { console.error('[inviteDelete] Fehler:', err); }
+        catch (err) { console.error('[inviteDelete] error:', err); }
     });
 
     // Thread events
     bot.client.on('threadCreate', async (thread) => {
         if (thread.guild?.id !== bot.CONFIG.GUILD_ID) return;
         try { await logThreadCreate(thread, bot); }
-        catch (err) { console.error('[threadCreate] Fehler:', err); }
+        catch (err) { console.error('[threadCreate] error:', err); }
     });
 
     bot.client.on('threadDelete', async (thread) => {
         if (thread.guild?.id !== bot.CONFIG.GUILD_ID) return;
         try { await logThreadDelete(thread, bot); }
-        catch (err) { console.error('[threadDelete] Fehler:', err); }
+        catch (err) { console.error('[threadDelete] error:', err); }
     });
 
     bot.client.on('threadUpdate', async (oldThread, newThread) => {
         if (newThread.guild?.id !== bot.CONFIG.GUILD_ID) return;
         try { await logThreadUpdate(oldThread, newThread, bot); }
-        catch (err) { console.error('[threadUpdate] Fehler:', err); }
+        catch (err) { console.error('[threadUpdate] error:', err); }
     });
 
     // Reaction events
     bot.client.on('messageReactionAdd', async (reaction, user) => {
         try { await logReactionAdd(reaction, user, bot); }
-        catch (err) { console.error('[messageReactionAdd] Fehler:', err); }
+        catch (err) { console.error('[messageReactionAdd] error:', err); }
     });
 
     bot.client.on('messageReactionRemove', async (reaction, user) => {
         try { await logReactionRemove(reaction, user, bot); }
-        catch (err) { console.error('[messageReactionRemove] Fehler:', err); }
+        catch (err) { console.error('[messageReactionRemove] error:', err); }
     });
 
     // Scheduled event events
     bot.client.on('guildScheduledEventCreate', async (event) => {
         if (event.guild?.id !== bot.CONFIG.GUILD_ID) return;
         try { await logScheduledEventCreate(event, bot); }
-        catch (err) { console.error('[guildScheduledEventCreate] Fehler:', err); }
+        catch (err) { console.error('[guildScheduledEventCreate] error:', err); }
     });
 
     bot.client.on('guildScheduledEventUpdate', async (oldEvent, newEvent) => {
         if (newEvent.guild?.id !== bot.CONFIG.GUILD_ID) return;
         try { await logScheduledEventUpdate(oldEvent, newEvent, bot); }
-        catch (err) { console.error('[guildScheduledEventUpdate] Fehler:', err); }
+        catch (err) { console.error('[guildScheduledEventUpdate] error:', err); }
     });
 
     bot.client.on('guildScheduledEventDelete', async (event) => {
         if (event.guild?.id !== bot.CONFIG.GUILD_ID) return;
         try { await logScheduledEventDelete(event, bot); }
-        catch (err) { console.error('[guildScheduledEventDelete] Fehler:', err); }
+        catch (err) { console.error('[guildScheduledEventDelete] error:', err); }
     });
 
     // Webhook events
     bot.client.on('webhooksUpdate', async (channel) => {
         if (channel.guild?.id !== bot.CONFIG.GUILD_ID) return;
         try { await logWebhookUpdate(channel, bot); }
-        catch (err) { console.error('[webhooksUpdate] Fehler:', err); }
+        catch (err) { console.error('[webhooksUpdate] error:', err); }
     });
 
     // Stage instance events
     bot.client.on('stageInstanceCreate', async (stageInstance) => {
         if (stageInstance.guildId !== bot.CONFIG.GUILD_ID) return;
         try { await logStageCreate(stageInstance, bot); }
-        catch (err) { console.error('[stageInstanceCreate] Fehler:', err); }
+        catch (err) { console.error('[stageInstanceCreate] error:', err); }
     });
 
     bot.client.on('stageInstanceUpdate', async (oldStage, newStage) => {
         if (newStage.guildId !== bot.CONFIG.GUILD_ID) return;
         try { await logStageUpdate(oldStage, newStage, bot); }
-        catch (err) { console.error('[stageInstanceUpdate] Fehler:', err); }
+        catch (err) { console.error('[stageInstanceUpdate] error:', err); }
     });
 
     bot.client.on('stageInstanceDelete', async (stageInstance) => {
         if (stageInstance.guildId !== bot.CONFIG.GUILD_ID) return;
         try { await logStageDelete(stageInstance, bot); }
-        catch (err) { console.error('[stageInstanceDelete] Fehler:', err); }
+        catch (err) { console.error('[stageInstanceDelete] error:', err); }
     });
 
     // Auto moderation events
     bot.client.on('autoModerationRuleCreate', async (rule) => {
         if (rule.guild?.id !== bot.CONFIG.GUILD_ID) return;
         try { await logAutoModRuleCreate(rule, bot); }
-        catch (err) { console.error('[autoModerationRuleCreate] Fehler:', err); }
+        catch (err) { console.error('[autoModerationRuleCreate] error:', err); }
     });
 
     bot.client.on('autoModerationRuleDelete', async (rule) => {
         if (rule.guild?.id !== bot.CONFIG.GUILD_ID) return;
         try { await logAutoModRuleDelete(rule, bot); }
-        catch (err) { console.error('[autoModerationRuleDelete] Fehler:', err); }
+        catch (err) { console.error('[autoModerationRuleDelete] error:', err); }
     });
 
     bot.client.on('autoModerationRuleUpdate', async (oldRule, newRule) => {
         if (newRule.guild?.id !== bot.CONFIG.GUILD_ID) return;
         try { await logAutoModRuleUpdate(oldRule, newRule, bot); }
-        catch (err) { console.error('[autoModerationRuleUpdate] Fehler:', err); }
+        catch (err) { console.error('[autoModerationRuleUpdate] error:', err); }
     });
 
     bot.client.on('autoModerationActionExecution', async (execution) => {
         try { await logAutoModActionExecution(execution, bot); }
-        catch (err) { console.error('[autoModerationActionExecution] Fehler:', err); }
+        catch (err) { console.error('[autoModerationActionExecution] error:', err); }
     });
 
     console.log('All event handlers registered successfully');
@@ -2105,11 +1897,11 @@ async function logManualModeration(data, action, bot) {
     if (!logChannel) return;
 
     const cfgMap = {
-        ban:    { title: '🔨 User Banned (Manual)',    color: 0xff0000 },
-        kick:   { title: '👢 User Kicked (Manual)',    color: 0xff8c00 },
-        mute:   { title: '🔇 User Muted (Manual)',     color: 0x808080 },
-        unmute: { title: '🔊 User Unmuted (Manual)',   color: 0x00cc44 },
-        unban:  { title: '🔓 User Unbanned (Manual)',  color: 0x00cc44 }
+        ban:    { title: 'User Banned (Manual)',    color: 0xff0000 },
+        kick:   { title: 'User Kicked (Manual)',    color: 0xff8c00 },
+        mute:   { title: 'User Muted (Manual)',     color: 0x808080 },
+        unmute: { title: 'User Unmuted (Manual)',   color: 0x00cc44 },
+        unban:  { title: 'User Unbanned (Manual)',  color: 0x00cc44 }
     };
 
     const cfg = cfgMap[action];
@@ -2125,15 +1917,15 @@ async function logManualModeration(data, action, bot) {
         .setThumbnail(data.user?.displayAvatarURL({ dynamic: true }) ?? null)
         .setTimestamp()
         .addFields(
-            { name: '👤 User',            value: `${data.user} \`${data.user?.id ?? 'Unknown'}\``, inline: true },
-            { name: '🛡️ Moderator',      value: data.executor?.toString() ?? 'Unknown',           inline: true },
-            { name: '📅 Account Created', value: accountCreated,                                   inline: true },
-            { name: '📝 Reason',          value: data.reason ?? 'No reason provided',              inline: false }
+            { name: 'User',            value: `${data.user} \`${data.user?.id ?? 'Unknown'}\``, inline: true },
+            { name: 'Moderator',      value: data.executor?.toString() ?? 'Unknown',           inline: true },
+            { name: 'Account Created', value: accountCreated,                                   inline: true },
+            { name: 'Reason',          value: data.reason ?? 'No reason provided',              inline: false }
         )
         .setFooter({ text: 'Manual action via Discord' });
 
     if (action === 'ban') {
-        embed.addFields({ name: '⏱️ Duration', value: 'Permanent', inline: true });
+        embed.addFields({ name: 'Duration', value: 'Permanent', inline: true });
     }
 
     if (action === 'mute') {
@@ -2148,13 +1940,13 @@ async function logManualModeration(data, action, bot) {
         } else if (/perm/i.test(reason)) {
             muteDuration = 'Permanent';
         }
-        embed.addFields({ name: '⏱️ Duration', value: muteDuration, inline: true });
+        embed.addFields({ name: 'Duration', value: muteDuration, inline: true });
     }
 
     await logChannel.send({ embeds: [embed] });
 }
 
-// Exporte
+// Exports
 module.exports = {
     registerEventHandlers,
     createTicket,

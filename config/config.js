@@ -7,7 +7,8 @@ module.exports = {
     GUILD_ID:         json.GUILD_ID,
     MINECRAFT_SERVER: json.MINECRAFT_SERVER,
     MINECRAFT_PORT:   json.MINECRAFT_PORT,
-    PANEL_MESSAGE_ID: json.PANEL_MESSAGE_ID,
+    PANEL_MESSAGE_ID:          json.PANEL_MESSAGE_ID,
+    APPLICATION_TIMEOUT_HOURS: json.APPLICATION_TIMEOUT_HOURS,
     DM_USER_ID:       json.DM_USER_ID,
 
     // Channels (flat)

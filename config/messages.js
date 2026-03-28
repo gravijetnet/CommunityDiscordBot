@@ -41,10 +41,16 @@ module.exports = {
     UNMUTE_DM_BODY:     (guildName)                  => fmt(json.UNMUTE_DM_BODY, { guildName }),
     UNMUTE_SUCCESS_BODY:(user)                       => fmt(json.UNMUTE_SUCCESS_BODY, { user }),
 
+    // Welcome
+    WELCOME_BODY:   (user, guild)  => fmt(json.WELCOME_BODY, { user, guild }),
+    WELCOME_FOOTER: (count)        => fmt(json.WELCOME_FOOTER, { count }),
+
     // Applications
-    APPLICATION_CONFIRM_BODY:         (category)         => fmt(json.APPLICATION_CONFIRM_BODY, { category }),
+    APPLICATION_CONFIRM_BODY:         (category, hours)  => fmt(json.APPLICATION_CONFIRM_BODY, { category, hours }),
     APPLICATION_SUMMARY_TITLE:        (category)         => fmt(json.APPLICATION_SUMMARY_TITLE, { category }),
     APPLICATION_ANSWER_UPDATED:       (n)                => fmt(json.APPLICATION_ANSWER_UPDATED, { n }),
+    APPLICATION_IN_PROGRESS_BODY:     (hours)            => fmt(json.APPLICATION_IN_PROGRESS_BODY, { hours }),
+    APPLICATION_TIMEOUT_BODY:         (hours)            => fmt(json.APPLICATION_TIMEOUT_BODY, { hours }),
     APPLICATION_ACCEPTED_BODY:        (category)         => fmt(json.APPLICATION_ACCEPTED_BODY, { category }),
     APPLICATION_ACCEPTED_REASON_BODY: (category, reason) => fmt(json.APPLICATION_ACCEPTED_REASON_BODY, { category, reason }),
     APPLICATION_DENIED_BODY:          (category)         => fmt(json.APPLICATION_DENIED_BODY, { category }),

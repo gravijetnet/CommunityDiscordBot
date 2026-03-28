@@ -159,15 +159,13 @@ class TicketBot {
     }
 }
 
-// Error Handling für uncaught exceptions
 process.on('uncaughtException', (error) => {
-    console.error('Uncaught Exception:', error);
+    console.error('Uncaught exception:', error);
 });
 
 process.on('unhandledRejection', (reason, promise) => {
-    console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+    console.error('Unhandled rejection:', promise, 'reason:', reason);
 });
 
-// Bot starten
 const bot = new TicketBot();
 bot.login();

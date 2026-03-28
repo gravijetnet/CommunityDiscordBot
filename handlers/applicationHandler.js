@@ -1,4 +1,4 @@
-const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, MessageFlags } = require('discord.js');
+const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, MessageFlags, ChannelType, PermissionsBitField } = require('discord.js');
 const MSG = require('../config/messages');
 
 async function fetchChannel(bot, channelId) {
@@ -20,7 +20,7 @@ class ApplicationHandler {
 
     initializeQuestions() {
         return {
-            'Helper': [
+            'Trainee': [
                 "What is your Ingame-Minecraft-Name?",
                 "How old are you?",
                 "In which time-zone do you live?",
@@ -121,7 +121,7 @@ class ApplicationHandler {
             .addOptions([
                 { label: 'Builders', value: 'Builder' },
                 { label: 'Media', value: 'Media' },
-                { label: 'Helper', value: 'Helper' },
+                { label: 'Trainee', value: 'Trainee' },
                 { label: 'Beta Testers', value: 'Beta-Tester' },
                 { label: 'Developers', value: 'Developer' }
             ]);
@@ -139,7 +139,7 @@ class ApplicationHandler {
         const existingSession = this.sessions.get(interaction.user.id);
         if (existingSession && existingSession.status === 'in_progress') {
             const embed = new EmbedBuilder()
-                .setTitle("❌ Application in Progress")
+                .setTitle("Application in Progress")
                 .setDescription(MSG.APPLICATION_ALREADY_OPEN)
                 .setColor(0xff0000);
             await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
@@ -154,7 +154,7 @@ class ApplicationHandler {
                 if (err) {
                     console.error('Error checking existing applications:', err);
                     const embed = new EmbedBuilder()
-                        .setTitle("❌ Error")
+                        .setTitle("Error")
                         .setDescription(MSG.GENERIC_DB_ERROR)
                         .setColor(0xff0000);
                     await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
@@ -163,7 +163,7 @@ class ApplicationHandler {
 
                 if (row) {
                     const embed = new EmbedBuilder()
-                        .setTitle("❌ Application in Progress")
+                        .setTitle("Application in Progress")
                         .setDescription(MSG.APPLICATION_ALREADY_OPEN)
                         .setColor(0xff0000);
                     await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
@@ -176,7 +176,7 @@ class ApplicationHandler {
                 // Check if user has forbidden role
                 if (forbiddenRoleId && interaction.member.roles.cache.has(forbiddenRoleId)) {
                     const embed = new EmbedBuilder()
-                        .setTitle("❌ Not Allowed")
+                        .setTitle("Not Allowed")
                         .setDescription(MSG.APPLICATION_ROLE_CONFLICT)
                         .setColor(0xff0000);
                     await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
@@ -209,7 +209,7 @@ class ApplicationHandler {
                 } catch (error) {
                     console.error('Error sending DM:', error);
                     const errorEmbed = new EmbedBuilder()
-                        .setTitle("❌ DMs Disabled")
+                        .setTitle("DMs Disabled")
                         .setDescription(MSG.APPLICATION_DM_BLOCKED)
                         .setColor(0xff0000);
                     await interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
@@ -219,7 +219,8 @@ class ApplicationHandler {
     }
 
     async sendApplicationConfirmation(user, category) {
-        let description = MSG.APPLICATION_CONFIRM_BODY(category);
+        const timeoutHours = this.bot.CONFIG.APPLICATION_TIMEOUT_HOURS ?? 3;
+        let description = MSG.APPLICATION_CONFIRM_BODY(category, timeoutHours);
 
         if (category === 'Builder') {
             description += MSG.APPLICATION_CONFIRM_BUILDER_NOTE;
@@ -260,7 +261,8 @@ class ApplicationHandler {
         const userId = interaction.user.id;
 
         const startedAt = new Date();
-        const expiresAt = new Date(startedAt.getTime() + 3 * 60 * 60 * 1000); // 3 hours
+        const timeoutHours = this.bot.CONFIG.APPLICATION_TIMEOUT_HOURS ?? 3;
+        const expiresAt = new Date(startedAt.getTime() + timeoutHours * 60 * 60 * 1000);
 
         this.bot.db.run(
             "INSERT INTO applications (user_id, username, category, answers, status, started_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -287,7 +289,7 @@ class ApplicationHandler {
 
                     const embed = new EmbedBuilder()
                         .setTitle(MSG.APPLICATION_IN_PROGRESS_TITLE)
-                        .setDescription(MSG.APPLICATION_IN_PROGRESS_BODY)
+                        .setDescription(MSG.APPLICATION_IN_PROGRESS_BODY(this.bot.CONFIG.APPLICATION_TIMEOUT_HOURS ?? 3))
                         .setColor(0x00ff00);
 
                     try {
@@ -552,7 +554,7 @@ class ApplicationHandler {
         const row = new ActionRowBuilder().addComponents(submitButton, editButton, cancelButton);
 
         await interaction.reply({
-            content: `✅ ${MSG.APPLICATION_ANSWER_UPDATED(questionNumber)}`,
+            content: MSG.APPLICATION_ANSWER_UPDATED(questionNumber),
             flags: MessageFlags.Ephemeral
         });
 
@@ -678,7 +680,7 @@ class ApplicationHandler {
 
                 const ticketButton = new ButtonBuilder()
                     .setCustomId(`application_ticket_${application.id}`)
-                    .setLabel('🎫 Open ticket with user')
+                    .setLabel('Open ticket with user')
                     .setStyle(ButtonStyle.Secondary);
 
                 const row1 = new ActionRowBuilder().addComponents(acceptButton, denyButton);
@@ -815,7 +817,7 @@ class ApplicationHandler {
                 const promotionChannel = await fetchChannel(this.bot, this.bot.CONFIG.PROMOTION_LOG_CHANNEL);
                 if (promotionChannel) {
                     const promotionEmbed = new EmbedBuilder()
-                        .setTitle("🎉 Promotion")
+                        .setTitle("Promotion")
                         .setDescription(MSG.APPLICATION_PROMOTION_LOG(user, application.category))
                         .setColor(0x00ff00)
                         .setTimestamp();
@@ -1038,8 +1040,6 @@ class ApplicationHandler {
     }
 
     async openApplicationTicket(interaction, application, user) {
-        const { ChannelType, PermissionsBitField } = require('discord.js');
-        
         const categoryChannel = await fetchChannel(this.bot, this.bot.CONFIG.SUPPORT_CATEGORY);
         const guild = interaction.guild;
 
@@ -1172,7 +1172,7 @@ class ApplicationHandler {
 
         const embed = new EmbedBuilder()
             .setTitle(MSG.APPLICATION_TIMEOUT_TITLE)
-            .setDescription(MSG.APPLICATION_TIMEOUT_BODY)
+            .setDescription(MSG.APPLICATION_TIMEOUT_BODY(this.bot.CONFIG.APPLICATION_TIMEOUT_HOURS ?? 3))
             .setColor(0xff0000);
 
         try {
@@ -1210,7 +1210,7 @@ class ApplicationHandler {
                     const user = await this.bot.client.users.fetch(userId);
                     await this.timeoutApplication(user);
                 } catch (err) {
-                    console.error(`[checkSessions] Konnte User ${userId} nicht fetchen:`, err);
+                    console.error(`[checkSessions] could not fetch user ${userId}:`, err);
                     // Clean up session even if we can't notify the user
                     this.sessions.delete(userId);
                     this.summarySessions.delete(userId);

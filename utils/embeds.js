@@ -4,7 +4,7 @@ const MSG = require('../config/messages');
 module.exports = {
     createSuccessEmbed(description) {
         return new EmbedBuilder()
-            .setTitle('✅ Success')
+            .setTitle('Success')
             .setDescription(description)
             .setColor(0x00ff00)
             .setTimestamp();
@@ -12,7 +12,7 @@ module.exports = {
 
     createErrorEmbed(description) {
         return new EmbedBuilder()
-            .setTitle('❌ Error')
+            .setTitle('Error')
             .setDescription(description)
             .setColor(0xff0000)
             .setTimestamp();
@@ -28,12 +28,11 @@ module.exports = {
 
     createWelcomeEmbed(member) {
         return new EmbedBuilder()
-            .setTitle('👋 Welcome!')
-            .setDescription(`Hey ${member.user.toString()}, welcome to **${member.guild.name}**!\n\nCheck out the rules and make yourself at home.`)
+            .setDescription(MSG.WELCOME_BODY(member.user.toString(), member.guild.name))
             .setThumbnail(member.user.displayAvatarURL({ dynamic: true, size: 256 }))
-            .setColor(0x00ff00)
+            .setColor(0x57F287)
             .setTimestamp()
-            .setFooter({ text: `Member #${member.guild.memberCount}` });
+            .setFooter({ text: MSG.WELCOME_FOOTER(member.guild.memberCount) });
     },
 
     createApplicationEmbed(application, user) {
@@ -57,11 +56,11 @@ module.exports = {
 
     createTicketEmbed(ticket, user) {
         const categoryConfig = {
-            general: { name: "ℹ️ General Support", color: 0x00ff00 },
-            bug: { name: "🐛 Bug Report", color: 0xff0000 },
-            player: { name: "⚠️ Player Report", color: 0xff0000 },
-            appeal: { name: "🔓 Punishment Appeal", color: 0x0000ff },
-            payment: { name: "💰 Payment Support", color: 0x0000ff }
+            general: { name: "General Support", color: 0x00ff00 },
+            bug: { name: "Bug Report", color: 0xff0000 },
+            player: { name: "Player Report", color: 0xff0000 },
+            appeal: { name: "Punishment Appeal", color: 0x0000ff },
+            payment: { name: "Payment Support", color: 0x0000ff }
         };
 
         const config = categoryConfig[ticket.category] || { name: 'Unknown', color: 0x808080 };

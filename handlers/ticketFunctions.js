@@ -20,7 +20,7 @@ async function createTicket(interaction, category, bot) {
 
             if (ban) {
                 const embed = new EmbedBuilder()
-                    .setTitle("❌ Ticket Creation Blocked")
+                    .setTitle("Ticket Creation Blocked")
                     .setDescription(MSG.TICKET_BANNED)
                     .setColor(0xff0000);
                 await interaction.reply({ embeds: [embed], ephemeral: true });
@@ -98,7 +98,7 @@ async function createTicketChannel(interaction, category, ticketCount, bot) {
     await channel.send({ content: `${interaction.user}`, embeds: [embed], components: [row] });
 
     const confirmEmbed = new EmbedBuilder()
-        .setTitle("✅ Ticket Created")
+        .setTitle("Ticket Created")
         .setDescription(MSG.TICKET_CREATED(channel))
         .setColor(0x00ff00);
 
@@ -123,12 +123,14 @@ async function closeTicketChannel(channel, closer, bot) {
                     let transcript = "";
                     try {
                         const messages = await channel.messages.fetch({ limit: 100 });
+                        const lines = [];
                         messages.reverse().forEach(message => {
-                            const attachments = message.attachments.size > 0 
-                                ? ` [${message.attachments.size} attachment(s)]` 
+                            const attachments = message.attachments.size > 0
+                                ? ` [${message.attachments.size} attachment(s)]`
                                 : '';
-                            transcript += `${message.author.username} (${message.author.id}) - ${message.createdAt}: ${message.content}${attachments}\n`;
+                            lines.push(`${message.author.username} (${message.author.id}) - ${message.createdAt}: ${message.content}${attachments}`);
                         });
+                        transcript = lines.join('\n');
                     } catch (error) {
                         console.error('Error fetching messages for transcript:', error);
                     }
