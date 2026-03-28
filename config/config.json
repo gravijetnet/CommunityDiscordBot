@@ -1,8 +1,8 @@
 {
     "_docs": {
         "_about":                    "All Discord IDs and server settings live here. config.js loads this file and flattens it so the rest of the bot can use values directly (e.g. bot.CONFIG.TICKET_CHANNEL).",
-        "APPLICATION_ID":            "Your bot's application ID. Discord Developer Portal → Your App → General Information → Application ID.",
-        "GUILD_ID":                  "The Discord server (guild) ID. Right-click the server icon → Copy Server ID. Requires Developer Mode to be enabled.",
+        "APPLICATION_ID":            "Your bot's application ID. Discord Dev Portal → Your App → General Information → Application ID.",
+        "GUILD_ID":                  "The Discord server (guild) ID. Right-click the server icon → Copy Server ID. Requires Dev Mode to be enabled.",
         "MINECRAFT_SERVER":          "Hostname or IP of the Minecraft server shown in /status.",
         "MINECRAFT_PORT":            "Query port of the Minecraft server (default Java: 25565).",
         "PANEL_MESSAGE_ID":          "Reserved — leave null. Used internally to track the ticket panel message.",
@@ -21,14 +21,13 @@
             "WELCOME_CHANNEL":              "Channel where a welcome message is sent when a new member joins.",
             "MONITORED_CATEGORY":           "Category ID whose message deletions trigger an extra DM alert to DM_USER_ID.",
             "PROMOTION_LOG_CHANNEL":        "Channel where promotion and demotion announcements are posted.",
-            "GRANT_COMMAND_CHANNEL":        "Channel where the bot sends raw grant/revoke rank commands.",
             "REPORT_CHANNEL":               "Channel where /report submissions are forwarded to staff.",
             "APPLICATION_PANEL_CHANNEL":    "Channel where the application selection panel is posted.",
             "APPLICATION_REVIEW_CHANNEL":   "Channel where completed applications are posted for staff review.",
             "APPLICATION_CATEGORY_SPECIFIC": {
                 "_about":    "Per-role review channels. Completed applications for each role type are posted to the matching channel instead of (or in addition to) the main review channel.",
                 "Builder":   "Review channel for Builder applications.",
-                "Developer": "Review channel for Developer applications.",
+                "Dev": "Review channel for Dev applications.",
                 "Media":     "Review channel for Media applications.",
                 "Beta-Tester": "Review channel for Beta-Tester applications."
             }
@@ -43,7 +42,6 @@
             "STAFF_ROLE":      "Role ID shared by all active staff members.",
             "MANAGEMENT_ROLE": "Role ID for management — required to use /promote, /demote, /massrole.",
             "RANK_ROLES":      "Map of rank name → role ID. Every promotable rank must be listed here.",
-            "FORBIDDEN_ROLES": "Roles that cannot stack with others when a user holds this rank.",
             "ROLE_HIERARCHY":  "When a rank is assigned, all ranks listed in its array are also added.",
             "STAFF_RANKS":     "Ranks that also receive the shared STAFF_ROLE on promotion."
         },
@@ -80,13 +78,12 @@
         "WELCOME_CHANNEL":          "000000000000000000",
         "MONITORED_CATEGORY":       "000000000000000000",
         "PROMOTION_LOG_CHANNEL":    "000000000000000000",
-        "GRANT_COMMAND_CHANNEL":    "000000000000000000",
         "REPORT_CHANNEL":           "000000000000000000",
         "APPLICATION_PANEL_CHANNEL":  "000000000000000000",
         "APPLICATION_REVIEW_CHANNEL": "000000000000000000",
         "APPLICATION_CATEGORY_SPECIFIC": {
             "Builder":     "000000000000000000",
-            "Developer":   "000000000000000000",
+            "Dev":   "000000000000000000",
             "Media":       "000000000000000000",
             "Beta-Tester": "000000000000000000"
         }
@@ -109,20 +106,11 @@
             "Famous":      "000000000000000000",
             "Partner":     "000000000000000000",
             "Builder":     "000000000000000000",
-            "Trainee":     "000000000000000000",
-            "Moderator":   "000000000000000000",
-            "SrModerator": "000000000000000000",
-            "Developer":   "000000000000000000",
+            "Helper":     "000000000000000000",
+            "Mod":   "000000000000000000",
+            "SrMod": "000000000000000000",
+            "Dev":   "000000000000000000",
             "Admin":       "000000000000000000",
-            "SrAdmin":     "000000000000000000",
-            "Beta-Tester": "000000000000000000"
-        },
-
-        "FORBIDDEN_ROLES": {
-            "Trainee":     "000000000000000000",
-            "Builder":     "000000000000000000",
-            "Developer":   "000000000000000000",
-            "Media":       "000000000000000000",
             "Beta-Tester": "000000000000000000"
         },
 
@@ -132,16 +120,12 @@
             "Famous":      ["Creator", "Media", "Famous"],
             "Partner":     ["Creator", "Media", "Famous", "Partner"],
             "Builder":     ["Builder"],
-            "Trainee":     ["Trainee"],
-            "Moderator":   ["Moderator"],
-            "SrModerator": ["SrModerator"],
-            "Admin":       ["Admin"],
-            "Developer":   ["Developer"],
-            "SrAdmin":     ["SrAdmin"],
+            "Helper":     ["Helper", "Mod", "SrMod", "Admin", "Owner"],
+            "Dev":   ["Dev"],
             "Beta-Tester": ["Beta-Tester"]
         },
 
-        "STAFF_RANKS": ["Trainee", "Moderator", "SrModerator", "Admin", "Developer", "SrAdmin"]
+        "STAFF_RANKS": ["Helper", "Mod", "SrMod", "Admin", "Dev", "Owner"]
     },
 
     "CATEGORY_PERMISSIONS": {

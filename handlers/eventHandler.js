@@ -157,24 +157,39 @@ async function logMessageDelete(message, bot) {
 
     const isMonitored = message.channel.parentId === bot.CONFIG.MONITORED_CATEGORY;
 
+    // All log channel IDs that should trigger a DM when a message is deleted in them
+    const logChannelIds = [
+        bot.CONFIG.LOG_CHANNEL,
+        bot.CONFIG.MESSAGE_LOG_CHANNEL,
+        bot.CONFIG.CHANNEL_LOG_CHANNEL,
+        bot.CONFIG.ROLE_LOG_CHANNEL,
+        bot.CONFIG.MEMBER_LOG_CHANNEL,
+        bot.CONFIG.USER_LOG_CHANNEL,
+        bot.CONFIG.PROMOTION_LOG_CHANNEL,
+    ].filter(Boolean);
+    const isLogChannel = logChannelIds.includes(message.channel.id);
+
     // Try to find who deleted the message via audit log (only appears if a mod deleted it)
     const executor = await fetchAuditExecutor(message.guild, AuditLogEvent.MessageDelete, message.author.id);
     const deletedByValue = executor
         ? `${executor} (${executor.tag})\n\`${executor.id}\``
         : `${message.author} (self)\n\`${message.author.id}\``;
 
+    const flagNote = isMonitored ? '  •  Monitored category' : isLogChannel ? '  •  Log channel' : '';
+    const embedColor = isMonitored ? 0xff4500 : isLogChannel ? 0xff6600 : 0xff0000;
+
     const embed = new EmbedBuilder()
         .setTitle('Message Deleted')
-        .setColor(isMonitored ? 0xff4500 : 0xff0000)
+        .setColor(embedColor)
         .setThumbnail(message.author.displayAvatarURL({ dynamic: true }))
         .setTimestamp()
         .addFields(
             { name: 'Author',      value: `${message.author} (${message.author.tag})\n\`${message.author.id}\``, inline: true },
             { name: 'Channel',     value: `${message.channel}\n\`${message.channel.name}\``,                      inline: true },
             { name: 'Sent',        value: `<t:${Math.floor(message.createdTimestamp / 1000)}:F>`,                 inline: true },
-            { name: 'Deleted by', value: deletedByValue,                                                          inline: true }
+            { name: 'Deleted by',  value: deletedByValue,                                                         inline: true }
         )
-        .setFooter({ text: `Message ID: ${message.id}${isMonitored ? '  •  Monitored category' : ''}` });
+        .setFooter({ text: `Message ID: ${message.id}${flagNote}` });
 
     if (message.content) {
         const preview = message.content.length > 1024
@@ -191,13 +206,18 @@ async function logMessageDelete(message, bot) {
     const logChannel = await getLogChannel(bot, bot.CONFIG.MESSAGE_LOG_CHANNEL);
     if (logChannel) await logChannel.send({ embeds: [embed] });
 
-    // Extra DM alert for monitored category
-    if (isMonitored) {
+    // DM alert for monitored category OR log channel deletions
+    if ((isMonitored || isLogChannel) && bot.CONFIG.DM_USER_ID) {
         try {
             const dmUser = await bot.client.users.fetch(bot.CONFIG.DM_USER_ID);
+            const dmTitle = isLogChannel
+                ? `Log-Kanal Nachricht gelöscht — #${message.channel.name}`
+                : `Message Deleted in Monitored Category`;
+            const dmColor = isLogChannel ? 0xff6600 : 0xff4500;
+
             const dmEmbed = new EmbedBuilder()
-                .setTitle('Message Deleted in Monitored Category')
-                .setColor(0xff4500)
+                .setTitle(dmTitle)
+                .setColor(dmColor)
                 .setThumbnail(message.author.displayAvatarURL({ dynamic: true }))
                 .setTimestamp()
                 .addFields(
@@ -205,7 +225,8 @@ async function logMessageDelete(message, bot) {
                     { name: 'Channel',    value: `#${message.channel.name}`,                                    inline: true },
                     { name: 'Server',     value: message.guild.name,                                            inline: true },
                     { name: 'Sent',       value: `<t:${Math.floor(message.createdTimestamp / 1000)}:F>`,        inline: true },
-                    { name: 'Deleted',   value: `<t:${Math.floor(Date.now() / 1000)}:F>`,                      inline: true },
+                    { name: 'Deleted',    value: `<t:${Math.floor(Date.now() / 1000)}:F>`,                     inline: true },
+                    { name: 'Deleted by', value: deletedByValue,                                                inline: true },
                     { name: 'Message ID', value: message.id,                                                    inline: true }
                 );
 
@@ -224,7 +245,7 @@ async function logMessageDelete(message, bot) {
 
             await dmUser.send({ embeds: [dmEmbed] });
         } catch (err) {
-            console.error('Could not send monitored-category DM:', err);
+            console.error('[logMessageDelete] Could not send DM alert:', err);
         }
     }
 }

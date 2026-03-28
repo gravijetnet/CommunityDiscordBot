@@ -1556,11 +1556,6 @@ async function handlePromote(interaction, options, bot) {
             await logChannel.send({ embeds: [logEmbed] });
         }
 
-        const grantChannel = await fetchChannel(bot, bot.CONFIG.GRANT_COMMAND_CHANNEL);
-        if (grantChannel) {
-            await grantChannel.send(`ogrant ${user.tag} ${rank} perm global Promoted`);
-        }
-
         const embed = new EmbedBuilder()
             .setTitle("User Promoted")
             .setDescription(MSG.PROMOTE_SUCCESS(user, rank))
@@ -1627,11 +1622,6 @@ async function handleDemote(interaction, options, bot) {
                     .setFooter({ text: MSG.DEMOTE_LOG_FOOTER });
 
                 await logChannel.send({ embeds: [logEmbed] });
-            }
-
-            const grantChannel = await fetchChannel(bot, bot.CONFIG.GRANT_COMMAND_CHANNEL);
-            if (grantChannel) {
-                await grantChannel.send(`rgrant ${user.tag} Member Demoted`);
             }
 
             const embed = new EmbedBuilder()
@@ -1712,11 +1702,6 @@ async function handleDemote(interaction, options, bot) {
                     .setFooter({ text: MSG.DEMOTE_LOG_FOOTER });
 
                 await logChannel.send({ embeds: [logEmbed] });
-            }
-
-            const grantChannel = await fetchChannel(bot, bot.CONFIG.GRANT_COMMAND_CHANNEL);
-            if (grantChannel) {
-                await grantChannel.send(`rgrant ${user.tag} ${rank} Demoted`);
             }
 
             const embed = new EmbedBuilder()

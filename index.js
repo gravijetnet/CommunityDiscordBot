@@ -37,7 +37,6 @@ class TicketBot {
         this.MANAGEMENT_ROLE = CONFIG.MANAGEMENT_ROLE;
         this.ROLE_HIERARCHY  = CONFIG.ROLE_HIERARCHY;
         this.STAFF_RANKS     = CONFIG.STAFF_RANKS;
-        this.FORBIDDEN_ROLES = CONFIG.FORBIDDEN_ROLES;
         
         this.initDatabase();
         this.setupEventListeners();

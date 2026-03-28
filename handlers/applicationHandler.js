@@ -170,19 +170,6 @@ class ApplicationHandler {
                     return;
                 }
 
-                // Continue with application if no existing one
-                const forbiddenRoleId = this.bot.FORBIDDEN_ROLES[category];
-
-                // Check if user has forbidden role
-                if (forbiddenRoleId && interaction.member.roles.cache.has(forbiddenRoleId)) {
-                    const embed = new EmbedBuilder()
-                        .setTitle("Not Allowed")
-                        .setDescription(MSG.APPLICATION_ROLE_CONFLICT)
-                        .setColor(0xff0000);
-                    await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
-                    return;
-                }
-
                 // Send ephemeral response with DM link button
                 const embed = new EmbedBuilder()
                     .setTitle(MSG.APPLICATION_STARTED_TITLE)
@@ -786,16 +773,6 @@ class ApplicationHandler {
             if (roleId) {
                 await member.roles.add(roleId);
                 
-                // Get Minecraft name from first answer
-                const answers = JSON.parse(application.answers);
-                const minecraftName = answers[0] || user.username;
-
-                // Send grant command
-                const grantChannel = await fetchChannel(this.bot, this.bot.CONFIG.GRANT_COMMAND_CHANNEL);
-                if (grantChannel) {
-                    await grantChannel.send(`ogrant ${minecraftName} ${application.category} perm global Promoted`);
-                }
-                
                 const embed = new EmbedBuilder()
                     .setTitle(MSG.APPLICATION_ACCEPTED_TITLE)
                     .setDescription(MSG.APPLICATION_ACCEPTED_BODY(application.category))
@@ -957,16 +934,6 @@ class ApplicationHandler {
             
             if (roleId) {
                 await member.roles.add(roleId);
-
-                // Get Minecraft name from first answer
-                const answers = JSON.parse(application.answers);
-                const minecraftName = answers[0] || user.username;
-
-                // Send grant command
-                const grantChannel = await fetchChannel(this.bot, this.bot.CONFIG.GRANT_COMMAND_CHANNEL);
-                if (grantChannel) {
-                    await grantChannel.send(`ogrant ${minecraftName} ${application.category} perm global Promoted`);
-                }
 
                 const embed = new EmbedBuilder()
                     .setTitle(MSG.APPLICATION_ACCEPTED_TITLE)
