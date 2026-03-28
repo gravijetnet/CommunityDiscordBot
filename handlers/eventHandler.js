@@ -25,7 +25,7 @@ async function setupTicketChannel(bot) {
         const existingPanel = messages.find(msg => 
             msg.author.id === bot.client.user.id && 
             msg.embeds.length > 0 && 
-            msg.embeds[0].title === "Support Tickets"
+            msg.embeds[0].title === MSG.TICKET_PANEL_TITLE
         );
 
         if (existingPanel) {
@@ -1946,11 +1946,4 @@ async function logManualModeration(data, action, bot) {
     await logChannel.send({ embeds: [embed] });
 }
 
-// Exports
-module.exports = {
-    registerEventHandlers,
-    createTicket,
-    createTicketChannel,
-    closeTicketChannel,
-    getLogChannel
-};
+module.exports = { registerEventHandlers };

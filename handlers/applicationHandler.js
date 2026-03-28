@@ -96,7 +96,7 @@ class ApplicationHandler {
             const existingPanel = messages.find(msg => 
                 msg.author.id === this.bot.client.user.id && 
                 msg.embeds.length > 0 && 
-                msg.embeds[0].title === "Applications"
+                msg.embeds[0].title === MSG.APPLICATION_PANEL_TITLE
             );
 
             if (existingPanel) {
@@ -459,7 +459,7 @@ class ApplicationHandler {
 
         const questionInput = new TextInputBuilder()
             .setCustomId('question_number')
-            .setLabel('Question Number (1-12)')
+            .setLabel(`Question Number (1-${this.questions[summarySession.category]?.length ?? 12})`)
             .setStyle(TextInputStyle.Short)
             .setPlaceholder('Enter question number to edit')
             .setRequired(true)
@@ -1105,7 +1105,7 @@ class ApplicationHandler {
     }
 
     async cancelApplication(interaction, reason = 'user_cancelled') {
-        const userId = interaction.user?.id || interaction.user?.id;
+        const userId = interaction.user?.id;
         
         if (!userId) {
             console.error('No user ID found for cancellation');
