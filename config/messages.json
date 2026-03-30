@@ -125,15 +125,15 @@
     "APPLICATION_TIMEOUT_TITLE":   "Application Expired",
     "APPLICATION_TIMEOUT_BODY":    "Your application timed out after {hours} hours. Feel free to start a new one whenever you're ready.",
 
-    "APPLICATION_ACCEPTED_TITLE":       "Application Accepted",
-    "APPLICATION_ACCEPTED_BODY":        "Your **{category}** application was accepted! You've been given the role.",
+        "APPLICATION_ACCEPTED_TITLE":       "Application Accepted",
+    "APPLICATION_ACCEPTED_BODY":        "Your **{category}** application was accepted!",
     "APPLICATION_ACCEPTED_REASON_BODY": "Your **{category}** application was accepted!\n\n**Note from staff:** {reason}",
     "APPLICATION_DENIED_TITLE":         "Application Denied",
     "APPLICATION_DENIED_BODY":          "Your **{category}** application wasn't accepted this time.",
     "APPLICATION_DENIED_REASON_BODY":   "Your **{category}** application wasn't accepted this time.\n\n**Reason:** {reason}",
 
-    "APPLICATION_PROMOTION_LOG":        "{user} was promoted to **{category}** via application.",
-    "APPLICATION_ACCEPT_STAFF_CONFIRM": "Application accepted — role assigned to {tag}.",
+    "APPLICATION_PROMOTION_LOG":        "{user} was promoted to **{category}**.",
+    "APPLICATION_ACCEPT_STAFF_CONFIRM": "Application accepted.",
     "APPLICATION_DENY_STAFF_CONFIRM":   "Application denied for {tag}.",
 
     "APPLICATION_NOT_FOUND":        "Couldn't find that application.",

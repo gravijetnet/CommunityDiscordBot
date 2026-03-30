@@ -26,4 +26,26 @@ module.exports = {
     RANK_ROLES:      json.STAFF_CONFIG.RANK_ROLES,
     ROLE_HIERARCHY:  json.STAFF_CONFIG.ROLE_HIERARCHY,
     STAFF_RANKS:     json.STAFF_CONFIG.STAFF_RANKS,
+
+    // Erweiterte Logging-Einstellungen
+    LOGGING: {
+        // Soll der volle Inhalt von gelöschten Nachrichten geloggt werden?
+        LOG_FULL_CONTENT: true,
+
+        // Maximale Länge für Embed-Inhalte (Zeichen)
+        MAX_EMBED_CONTENT: 1000,
+
+        // Soll bei langen Nachrichten eine Datei erstellt werden?
+        CREATE_FILE_FOR_LONG_CONTENT: true,
+
+        // Datei-Erstellungsschwellwert (Zeichen)
+        FILE_THRESHOLD: 1900,
+
+        // Sollen Anhänge in Logs verlinkt werden?
+        LOG_ATTACHMENT_URLS: true,
+
+        // Sollen bearbeitete Nachrichten detailliert verglichen werden?
+        DETAILED_EDIT_LOGGING: true
+    }
 };
+

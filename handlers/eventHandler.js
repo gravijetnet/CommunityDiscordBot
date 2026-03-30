@@ -151,145 +151,439 @@ function formatDuration(ms) {
 // ── Message logs ──────────────────────────────────────────────────────────────
 
 async function logMessageDelete(message, bot) {
-    // Partial (uncached) messages don't have author/content — skip silently
-    if (message.partial || !message.author) return;
+    try {
+        // Try to fetch partial messages
+        if (message.partial) {
+            try {
+                message = await message.fetch();
+            } catch (fetchError) {
+                // If message no longer available
+                const embed = new EmbedBuilder()
+                    .setTitle('Message Deleted (Not in Cache)')
+                    .setColor(0xff0000)
+                    .setTimestamp()
+                    .addFields(
+                        { name: 'Channel', value: `<#${message.channelId}>`, inline: true },
+                        { name: 'Message ID', value: `\`${message.id}\``, inline: true },
+                        { name: 'Status', value: 'Could not fetch message content', inline: false }
+                    )
+                    .setFooter({ text: 'Content not available' });
+                
+                const logChannel = await getLogChannel(bot, bot.CONFIG.MESSAGE_LOG_CHANNEL);
+                if (logChannel) await logChannel.send({ embeds: [embed] });
+                return;
+            }
+        }
 
-    const isMonitored = message.channel.parentId === bot.CONFIG.MONITORED_CATEGORY;
+        // Skip if no author (e.g., system message)
+        if (!message.author) return;
 
-    // All log channel IDs that should trigger a DM when a message is deleted in them
-    const logChannelIds = [
-        bot.CONFIG.LOG_CHANNEL,
-        bot.CONFIG.MESSAGE_LOG_CHANNEL,
-        bot.CONFIG.CHANNEL_LOG_CHANNEL,
-        bot.CONFIG.ROLE_LOG_CHANNEL,
-        bot.CONFIG.MEMBER_LOG_CHANNEL,
-        bot.CONFIG.USER_LOG_CHANNEL,
-        bot.CONFIG.PROMOTION_LOG_CHANNEL,
-    ].filter(Boolean);
-    const isLogChannel = logChannelIds.includes(message.channel.id);
+        const isMonitored = message.channel.parentId === bot.CONFIG.MONITORED_CATEGORY;
+        const logChannelIds = [
+            bot.CONFIG.LOG_CHANNEL,
+            bot.CONFIG.MESSAGE_LOG_CHANNEL,
+            bot.CONFIG.CHANNEL_LOG_CHANNEL,
+            bot.CONFIG.ROLE_LOG_CHANNEL,
+            bot.CONFIG.MEMBER_LOG_CHANNEL,
+            bot.CONFIG.USER_LOG_CHANNEL,
+            bot.CONFIG.PROMOTION_LOG_CHANNEL,
+        ].filter(Boolean);
+        const isLogChannel = logChannelIds.includes(message.channel.id);
 
-    // Try to find who deleted the message via audit log (only appears if a mod deleted it)
-    const executor = await fetchAuditExecutor(message.guild, AuditLogEvent.MessageDelete, message.author.id);
-    const deletedByValue = executor
-        ? `${executor} (${executor.tag})\n\`${executor.id}\``
-        : `${message.author} (self)\n\`${message.author.id}\``;
-
-    const flagNote = isMonitored ? '  •  Monitored category' : isLogChannel ? '  •  Log channel' : '';
-    const embedColor = isMonitored ? 0xff4500 : isLogChannel ? 0xff6600 : 0xff0000;
-
-    const embed = new EmbedBuilder()
-        .setTitle('Message Deleted')
-        .setColor(embedColor)
-        .setThumbnail(message.author.displayAvatarURL({ dynamic: true }))
-        .setTimestamp()
-        .addFields(
-            { name: 'Author',      value: `${message.author} (${message.author.tag})\n\`${message.author.id}\``, inline: true },
-            { name: 'Channel',     value: `${message.channel}\n\`${message.channel.name}\``,                      inline: true },
-            { name: 'Sent',        value: `<t:${Math.floor(message.createdTimestamp / 1000)}:F>`,                 inline: true },
-            { name: 'Deleted by',  value: deletedByValue,                                                         inline: true }
-        )
-        .setFooter({ text: `Message ID: ${message.id}${flagNote}` });
-
-    if (message.content) {
-        const preview = message.content.length > 1024
-            ? message.content.substring(0, 1020) + '…'
-            : message.content;
-        embed.addFields({ name: `Content (${message.content.length} chars)`, value: preview, inline: false });
-    }
-
-    if (message.attachments.size > 0) {
-        const list = message.attachments.map(a => `[${a.name}](${a.url})`).join('\n');
-        embed.addFields({ name: `Attachments (${message.attachments.size})`, value: list.substring(0, 1024), inline: false });
-    }
-
-    const logChannel = await getLogChannel(bot, bot.CONFIG.MESSAGE_LOG_CHANNEL);
-    if (logChannel) await logChannel.send({ embeds: [embed] });
-
-    // DM alert for monitored category OR log channel deletions
-    if ((isMonitored || isLogChannel) && bot.CONFIG.DM_USER_ID) {
-        try {
-            const dmUser = await bot.client.users.fetch(bot.CONFIG.DM_USER_ID);
-            const dmTitle = isLogChannel
-                ? `Log-Kanal Nachricht gelöscht — #${message.channel.name}`
-                : `Message Deleted in Monitored Category`;
-            const dmColor = isLogChannel ? 0xff6600 : 0xff4500;
-
-            const dmEmbed = new EmbedBuilder()
-                .setTitle(dmTitle)
-                .setColor(dmColor)
-                .setThumbnail(message.author.displayAvatarURL({ dynamic: true }))
-                .setTimestamp()
-                .addFields(
-                    { name: 'Author',     value: `${message.author.tag}\n\`${message.author.id}\``,            inline: true },
-                    { name: 'Channel',    value: `#${message.channel.name}`,                                    inline: true },
-                    { name: 'Server',     value: message.guild.name,                                            inline: true },
-                    { name: 'Sent',       value: `<t:${Math.floor(message.createdTimestamp / 1000)}:F>`,        inline: true },
-                    { name: 'Deleted',    value: `<t:${Math.floor(Date.now() / 1000)}:F>`,                     inline: true },
-                    { name: 'Deleted by', value: deletedByValue,                                                inline: true },
-                    { name: 'Message ID', value: message.id,                                                    inline: true }
+        // Who deleted the message? (Audit Log)
+        const executor = await fetchAuditExecutor(message.guild, AuditLogEvent.MessageDelete, message.author?.id);
+        
+        // Extract reason from audit log
+        let deletionReason = 'No reason provided';
+        if (executor) {
+            try {
+                const auditLogs = await message.guild.fetchAuditLogs({
+                    type: AuditLogEvent.MessageDelete,
+                    limit: 5
+                });
+                
+                const logEntry = auditLogs.entries.find(entry => 
+                    entry.target.id === message.author?.id &&
+                    entry.extra.channel.id === message.channel.id &&
+                    Date.now() - entry.createdTimestamp < 5000
                 );
+                
+                if (logEntry?.reason) {
+                    deletionReason = logEntry.reason;
+                }
+            } catch (auditError) {
+                console.error('Error fetching audit log:', auditError);
+            }
+        }
 
-            if (message.content) {
-                dmEmbed.addFields({
-                    name: `Content (${message.content.length} chars)`,
-                    value: message.content.length > 2000 ? message.content.substring(0, 1996) + '…' : message.content,
+        const deletedByValue = executor
+            ? `${executor} (${executor.tag})\n\`${executor.id}\``
+            : `${message.author} (self)\n\`${message.author.id}\``;
+
+        const flagNote = isMonitored ? '  •  Monitored category' : isLogChannel ? '  •  Log channel' : '';
+        const embedColor = isMonitored ? 0xff4500 : isLogChannel ? 0xff6600 : 0xff0000;
+
+        // Create embed
+        const embed = new EmbedBuilder()
+            .setTitle('Message Deleted')
+            .setColor(embedColor)
+            .setThumbnail(message.author.displayAvatarURL({ dynamic: true }))
+            .setTimestamp()
+            .addFields(
+                { name: 'Author', value: `${message.author} (${message.author.tag})\n\`${message.author.id}\``, inline: true },
+                { name: 'Channel', value: `${message.channel}\n\`${message.channel.name}\``, inline: true },
+                { name: 'Message ID', value: `\`${message.id}\``, inline: true },
+                { name: 'Created', value: `<t:${Math.floor(message.createdTimestamp / 1000)}:R>`, inline: true },
+                { name: 'Deleted', value: `<t:${Math.floor(Date.now() / 1000)}:R>`, inline: true },
+                { name: 'Deleted by', value: deletedByValue, inline: true },
+                { name: 'Reason', value: deletionReason, inline: true }
+            );
+
+        // Add message content
+        if (message.content) {
+            // Ensure content is safe for Discord embeds
+            let displayContent = message.content;
+            
+            // Truncate if too long
+            if (displayContent.length > 1000) {
+                displayContent = displayContent.substring(0, 1000) + '...';
+            }
+            
+            // Escape special characters
+            displayContent = displayContent.replace(/`/g, '\\`').replace(/\*/g, '\\*').replace(/_/g, '\\_');
+            
+            embed.addFields({
+                name: `Content (${message.content.length} characters)`,
+                value: `\`\`\`\n${displayContent}\n\`\`\``,
+                inline: false
+            });
+        } else {
+            embed.addFields({
+                name: 'Content',
+                value: '*No text content*',
+                inline: false
+            });
+        }
+
+        // Process attachments
+        if (message.attachments.size > 0) {
+            const attachments = Array.from(message.attachments.values());
+            let attachmentList = '';
+            
+            attachments.forEach((attachment, index) => {
+                if (index < 5) { // Max 5 attachments listed
+                    attachmentList += `**${attachment.name}**\n${attachment.url}\n`;
+                }
+            });
+            
+            if (attachments.length > 5) {
+                attachmentList += `\n... and ${attachments.length - 5} more`;
+            }
+            
+            embed.addFields({
+                name: `Attachments (${message.attachments.size})`,
+                value: attachmentList || '*No information available*',
+                inline: false
+            });
+            
+            // Add preview image for images
+            const imageAttachment = attachments.find(att => 
+                att.contentType?.startsWith('image/') || 
+                att.name.match(/\.(jpg|jpeg|png|gif|webp)$/i)
+            );
+            
+            if (imageAttachment) {
+                embed.setImage(imageAttachment.url);
+            }
+        }
+
+        // Process embeds (e.g., Rich Embeds from other bots)
+        if (message.embeds.length > 0) {
+            const embedTypes = [];
+            message.embeds.forEach(msgEmbed => {
+                if (msgEmbed.title) embedTypes.push(`Title: "${msgEmbed.title}"`);
+                if (msgEmbed.description) embedTypes.push('Description present');
+                if (msgEmbed.fields?.length > 0) embedTypes.push(`${msgEmbed.fields.length} fields`);
+                if (msgEmbed.image) embedTypes.push('Image');
+                if (msgEmbed.thumbnail) embedTypes.push('Thumbnail');
+            });
+            
+            if (embedTypes.length > 0) {
+                embed.addFields({
+                    name: `Rich Embeds (${message.embeds.length})`,
+                    value: embedTypes.slice(0, 5).join(', ') + (embedTypes.length > 5 ? '...' : ''),
                     inline: false
                 });
             }
+        }
 
-            if (message.attachments.size > 0) {
-                const list = message.attachments.map(a => `**${a.name}**: ${a.url}`).join('\n');
-                dmEmbed.addFields({ name: `Attachments (${message.attachments.size})`, value: list.substring(0, 1024), inline: false });
+        // Process stickers
+        if (message.stickers.size > 0) {
+            const stickerList = Array.from(message.stickers.values())
+                .map(sticker => sticker.name)
+                .join(', ');
+            
+            embed.addFields({
+                name: `Stickers (${message.stickers.size})`,
+                value: stickerList.length > 100 ? stickerList.substring(0, 97) + '...' : stickerList,
+                inline: true
+            });
+        }
+
+        // Footer with additional info
+        embed.setFooter({ 
+            text: `Message ID: ${message.id} | Channel ID: ${message.channel.id}${flagNote}` 
+        });
+
+        // Send to log channel
+        const logChannel = await getLogChannel(bot, bot.CONFIG.MESSAGE_LOG_CHANNEL);
+        if (logChannel) {
+            try {
+                await logChannel.send({ embeds: [embed] });
+                
+                // If content was very long, attach as file
+                if (message.content && message.content.length > 1900) {
+                    const timestamp = Math.floor(Date.now() / 1000);
+                    const fileName = `deleted_message_${message.id}_${timestamp}.txt`;
+                    
+                    const fileContent = `Deleted Message - ${new Date().toISOString()}\n` +
+                                      `Author: ${message.author?.tag || 'Unknown'} (${message.author?.id || 'N/A'})\n` +
+                                      `Channel: #${message.channel.name} (${message.channel.id})\n` +
+                                      `Message ID: ${message.id}\n` +
+                                      `Created: ${message.createdAt.toISOString()}\n` +
+                                      `Deleted: ${new Date().toISOString()}\n` +
+                                      `Deleted by: ${executor?.tag || 'Unknown'} (${executor?.id || 'N/A'})\n` +
+                                      `Reason: ${deletionReason}\n\n` +
+                                      `CONTENT:\n${'='.repeat(50)}\n${message.content}\n${'='.repeat(50)}\n\n` +
+                                      `ATTACHMENTS (${message.attachments.size}):\n`;
+                    
+                    if (message.attachments.size > 0) {
+                        message.attachments.forEach((attachment, index) => {
+                            fileContent += `${index + 1}. ${attachment.name}: ${attachment.url}\n`;
+                        });
+                    }
+                    
+                    await logChannel.send({
+                        files: [{
+                            attachment: Buffer.from(fileContent, 'utf-8'),
+                            name: fileName
+                        }]
+                    });
+                }
+            } catch (sendError) {
+                console.error('Error sending delete log:', sendError);
             }
+        }
 
-            await dmUser.send({ embeds: [dmEmbed] });
-        } catch (err) {
-            console.error('[logMessageDelete] Could not send DM alert:', err);
+        // DM alert for monitored category OR log channel deletions (keep existing)
+        if ((isMonitored || isLogChannel) && bot.CONFIG.DM_USER_ID) {
+            try {
+                const dmUser = await bot.client.users.fetch(bot.CONFIG.DM_USER_ID);
+                const dmTitle = isLogChannel
+                    ? `Log-Kanal Nachricht gelöscht — #${message.channel.name}`
+                    : `Message Deleted in Monitored Category`;
+                const dmColor = isLogChannel ? 0xff6600 : 0xff4500;
+
+                const dmEmbed = new EmbedBuilder()
+                    .setTitle(dmTitle)
+                    .setColor(dmColor)
+                    .setThumbnail(message.author.displayAvatarURL({ dynamic: true }))
+                    .setTimestamp()
+                    .addFields(
+                        { name: 'Author',     value: `${message.author.tag}\n\`${message.author.id}\``,            inline: true },
+                        { name: 'Channel',    value: `#${message.channel.name}`,                                    inline: true },
+                        { name: 'Server',     value: message.guild.name,                                            inline: true },
+                        { name: 'Sent',       value: `<t:${Math.floor(message.createdTimestamp / 1000)}:F>`,        inline: true },
+                        { name: 'Deleted',    value: `<t:${Math.floor(Date.now() / 1000)}:F>`,                     inline: true },
+                        { name: 'Deleted by', value: deletedByValue,                                                inline: true },
+                        { name: 'Message ID', value: message.id,                                                    inline: true }
+                    );
+
+                if (message.content) {
+                    dmEmbed.addFields({
+                        name: `Content (${message.content.length} chars)`,
+                        value: message.content.length > 2000 ? message.content.substring(0, 1996) + '…' : message.content,
+                        inline: false
+                    });
+                }
+
+                if (message.attachments.size > 0) {
+                    const list = message.attachments.map(a => `**${a.name}**: ${a.url}`).join('\n');
+                    dmEmbed.addFields({ name: `Attachments (${message.attachments.size})`, value: list.substring(0, 1024), inline: false });
+                }
+
+                await dmUser.send({ embeds: [dmEmbed] });
+            } catch (err) {
+                console.error('[logMessageDelete] Could not send DM alert:', err);
+            }
+        }
+
+    } catch (error) {
+        console.error('Error in logMessageDelete:', error);
+        
+        // Fallback: log minimal info
+        try {
+            const fallbackEmbed = new EmbedBuilder()
+                .setTitle('Message Deleted (Error Processing)')
+                .setColor(0xff0000)
+                .setTimestamp()
+                .addFields(
+                    { name: 'Channel ID', value: `\`${message.channelId || 'Unknown'}\``, inline: true },
+                    { name: 'Message ID', value: `\`${message.id || 'Unknown'}\``, inline: true },
+                    { name: 'Error', value: `\`${error.message}\``, inline: false }
+                );
+            
+            const logChannel = await getLogChannel(bot, bot.CONFIG.MESSAGE_LOG_CHANNEL);
+            if (logChannel) await logChannel.send({ embeds: [fallbackEmbed] });
+        } catch (fallbackError) {
+            console.error('Fallback logging failed:', fallbackError);
         }
     }
 }
 
 async function logMessageUpdate(oldMessage, newMessage, bot) {
-    // Fetch partials so we always have full content
-    if (oldMessage.partial) {
-        try { oldMessage = await oldMessage.fetch(); } catch { return; }
-    }
-    if (newMessage.partial) {
-        try { newMessage = await newMessage.fetch(); } catch { return; }
-    }
-    if (!oldMessage.author) return;
-    if (oldMessage.content === newMessage.content) return;
+    try {
+        // Fetch partials so we always have full content
+        if (oldMessage.partial) {
+            try { oldMessage = await oldMessage.fetch(); } catch { 
+                console.log('Could not fetch old message');
+                return; 
+            }
+        }
+        if (newMessage.partial) {
+            try { newMessage = await newMessage.fetch(); } catch { 
+                console.log('Could not fetch new message');
+                return; 
+            }
+        }
+        if (!oldMessage.author || !newMessage.author) return;
+        if (oldMessage.content === newMessage.content) return;
 
-    const embed = new EmbedBuilder()
-        .setTitle('Message Edited')
-        .setColor(0xffcc00)
-        .setThumbnail(newMessage.author.displayAvatarURL({ dynamic: true }))
-        .setTimestamp()
-        .addFields(
-            { name: 'Author',          value: `${newMessage.author} (${newMessage.author.tag})\n\`${newMessage.author.id}\``, inline: true },
-            { name: 'Channel',         value: `${newMessage.channel}\n\`${newMessage.channel.name}\``,                       inline: true },
-            { name: 'Jump to message', value: `[Click here](${newMessage.url})`,                                              inline: true }
-        )
-        .setFooter({ text: `Message ID: ${newMessage.id}` });
+        const embed = new EmbedBuilder()
+            .setTitle('Message Edited')
+            .setColor(0xffcc00)
+            .setThumbnail(newMessage.author.displayAvatarURL({ dynamic: true }))
+            .setTimestamp()
+            .addFields(
+                { name: 'Author',          value: `${newMessage.author} (${newMessage.author.tag})\n\`${newMessage.author.id}\``, inline: true },
+                { name: 'Channel',         value: `${newMessage.channel}\n\`${newMessage.channel.name}\``, inline: true },
+                { name: 'Message ID',      value: `\`${newMessage.id}\``, inline: true },
+                { name: 'Created',         value: `<t:${Math.floor(oldMessage.createdTimestamp / 1000)}:R>`, inline: true },
+                { name: 'Edited',          value: `<t:${Math.floor(Date.now() / 1000)}:R>`, inline: true },
+                { name: 'Jump to message', value: `[Click here](${newMessage.url})`, inline: true }
+            )
+            .setFooter({ text: `Message ID: ${newMessage.id} | Channel ID: ${newMessage.channel.id}` });
 
-    if (oldMessage.content) {
-        embed.addFields({
-            name: `Before (${oldMessage.content.length} chars)`,
-            value: oldMessage.content.length > 1024 ? oldMessage.content.substring(0, 1020) + '…' : oldMessage.content,
-            inline: false
-        });
+        if (oldMessage.content) {
+            let oldContent = oldMessage.content;
+            if (oldContent.length > 500) {
+                oldContent = oldContent.substring(0, 500) + '...';
+            }
+            oldContent = oldContent.replace(/`/g, '\\`').replace(/\*/g, '\\*').replace(/_/g, '\\_');
+            
+            embed.addFields({
+                name: `Before (${oldMessage.content.length} chars)`,
+                value: `\`\`\`\n${oldContent}\n\`\`\``,
+                inline: false
+            });
+        } else {
+            embed.addFields({
+                name: 'Before',
+                value: '*No content*',
+                inline: false
+            });
+        }
+
+        if (newMessage.content) {
+            let newContent = newMessage.content;
+            if (newContent.length > 500) {
+                newContent = newContent.substring(0, 500) + '...';
+            }
+            newContent = newContent.replace(/`/g, '\\`').replace(/\*/g, '\\*').replace(/_/g, '\\_');
+            
+            embed.addFields({
+                name: `After (${newMessage.content.length} chars)`,
+                value: `\`\`\`\n${newContent}\n\`\`\``,
+                inline: false
+            });
+        } else {
+            embed.addFields({
+                name: 'After',
+                value: '*No content*',
+                inline: false
+            });
+        }
+
+        // Check for attachments changes
+        const oldAttachments = oldMessage.attachments.size;
+        const newAttachments = newMessage.attachments.size;
+        if (oldAttachments !== newAttachments) {
+            embed.addFields({
+                name: 'Attachments',
+                value: `Changed from ${oldAttachments} to ${newAttachments} attachments`,
+                inline: true
+            });
+        }
+
+        // Check for embeds changes
+        const oldEmbeds = oldMessage.embeds.length;
+        const newEmbeds = newMessage.embeds.length;
+        if (oldEmbeds !== newEmbeds) {
+            embed.addFields({
+                name: 'Embeds',
+                value: `Changed from ${oldEmbeds} to ${newEmbeds} embeds`,
+                inline: true
+            });
+        }
+
+        const logChannel = await getLogChannel(bot, bot.CONFIG.MESSAGE_LOG_CHANNEL);
+        if (logChannel) {
+            await logChannel.send({ embeds: [embed] });
+            
+            // If content was very long, attach as file
+            if ((oldMessage.content && oldMessage.content.length > 1900) || 
+                (newMessage.content && newMessage.content.length > 1900)) {
+                const timestamp = Math.floor(Date.now() / 1000);
+                const fileName = `edited_message_${newMessage.id}_${timestamp}.txt`;
+                
+                const fileContent = `Edited Message - ${new Date().toISOString()}\n` +
+                                  `Author: ${newMessage.author?.tag || 'Unknown'} (${newMessage.author?.id || 'N/A'})\n` +
+                                  `Channel: #${newMessage.channel.name} (${newMessage.channel.id})\n` +
+                                  `Message ID: ${newMessage.id}\n` +
+                                  `Created: ${oldMessage.createdAt.toISOString()}\n` +
+                                  `Edited: ${new Date().toISOString()}\n\n` +
+                                  `BEFORE (${oldMessage.content?.length || 0} chars):\n${'='.repeat(50)}\n${oldMessage.content || 'No content'}\n${'='.repeat(50)}\n\n` +
+                                  `AFTER (${newMessage.content?.length || 0} chars):\n${'='.repeat(50)}\n${newMessage.content || 'No content'}\n${'='.repeat(50)}\n`;
+                
+                await logChannel.send({
+                    files: [{
+                        attachment: Buffer.from(fileContent, 'utf-8'),
+                        name: fileName
+                    }]
+                });
+            }
+        }
+    } catch (error) {
+        console.error('Error in logMessageUpdate:', error);
+        
+        // Fallback logging
+        try {
+            const fallbackEmbed = new EmbedBuilder()
+                .setTitle('Message Edited (Error Processing)')
+                .setColor(0xff0000)
+                .setTimestamp()
+                .addFields(
+                    { name: 'Channel ID', value: `\`${newMessage?.channelId || oldMessage?.channelId || 'Unknown'}\``, inline: true },
+                    { name: 'Message ID', value: `\`${newMessage?.id || oldMessage?.id || 'Unknown'}\``, inline: true },
+                    { name: 'Error', value: `\`${error.message}\``, inline: false }
+                );
+            
+            const logChannel = await getLogChannel(bot, bot.CONFIG.MESSAGE_LOG_CHANNEL);
+            if (logChannel) await logChannel.send({ embeds: [fallbackEmbed] });
+        } catch (fallbackError) {
+            console.error('Fallback logging failed:', fallbackError);
+        }
     }
-
-    if (newMessage.content) {
-        embed.addFields({
-            name: `After (${newMessage.content.length} chars)`,
-            value: newMessage.content.length > 1024 ? newMessage.content.substring(0, 1020) + '…' : newMessage.content,
-            inline: false
-        });
-    }
-
-    const logChannel = await getLogChannel(bot, bot.CONFIG.MESSAGE_LOG_CHANNEL);
-    if (logChannel) await logChannel.send({ embeds: [embed] });
 }
 
 // ── Channel logs ──────────────────────────────────────────────────────────────
@@ -1509,14 +1803,13 @@ function registerEventHandlers(bot) {
         console.log('All systems initialized successfully');
 
         // Verify all log channels are accessible
-        const channelChecks = [
+                const channelChecks = [
             ['LOG_CHANNEL (Moderation)',    bot.CONFIG.LOG_CHANNEL],
             ['MESSAGE_LOG_CHANNEL',         bot.CONFIG.MESSAGE_LOG_CHANNEL],
             ['CHANNEL_LOG_CHANNEL',         bot.CONFIG.CHANNEL_LOG_CHANNEL],
             ['ROLE_LOG_CHANNEL',            bot.CONFIG.ROLE_LOG_CHANNEL],
             ['MEMBER_LOG_CHANNEL',          bot.CONFIG.MEMBER_LOG_CHANNEL],
             ['USER_LOG_CHANNEL',            bot.CONFIG.USER_LOG_CHANNEL],
-            ['WELCOME_CHANNEL',             bot.CONFIG.WELCOME_CHANNEL],
             ['TRANSCRIPT_CHANNEL',          bot.CONFIG.TRANSCRIPT_CHANNEL],
             ['PROMOTION_LOG_CHANNEL',       bot.CONFIG.PROMOTION_LOG_CHANNEL],
             ['REPORT_CHANNEL',              bot.CONFIG.REPORT_CHANNEL],
@@ -1653,26 +1946,7 @@ function registerEventHandlers(bot) {
             console.error('[guildMemberAdd] Role assignment failed:', err);
         }
 
-        // Send welcome message
-        if (!member.user.bot) {
-            try {
-                const welcomeChannel = await getLogChannel(bot, bot.CONFIG.WELCOME_CHANNEL);
-                if (welcomeChannel) {
-                    const accountAgeDays = Math.floor((Date.now() - member.user.createdTimestamp) / 86400000);
-                    const welcomeEmbed = new EmbedBuilder()
-                        .setDescription(MSG.WELCOME_BODY(member.user.toString(), member.guild.name))
-                        .setThumbnail(member.user.displayAvatarURL({ dynamic: true, size: 256 }))
-                        .setColor(0x57F287)
-                        .setTimestamp()
-                        .setFooter({ text: MSG.WELCOME_FOOTER(member.guild.memberCount) });
-                    await welcomeChannel.send({ embeds: [welcomeEmbed] });
-                } else {
-                    console.error('[guildMemberAdd] WELCOME_CHANNEL not found:', bot.CONFIG.WELCOME_CHANNEL);
-                }
-            } catch (err) {
-                console.error('[guildMemberAdd] welcome message failed:', err);
-            }
-        }
+        
 
         try {
             await logMemberJoin(member, bot);

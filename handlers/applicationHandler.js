@@ -617,72 +617,87 @@ class ApplicationHandler {
         await this.postApplicationForReview(applicationId);
     }
 
-    async postApplicationForReview(applicationId) {
+        async postApplicationForReview(applicationId) {
         this.bot.db.get(
             "SELECT * FROM applications WHERE id = ?",
             [applicationId],
             async (err, application) => {
                 if (err || !application) return;
 
-                const user = await this.bot.client.users.fetch(application.user_id);
-                const answers = JSON.parse(application.answers);
-                const questions = this.questions[application.category];
+                try {
+                    const user = await this.bot.client.users.fetch(application.user_id);
+                    const answers = JSON.parse(application.answers);
+                    const questions = this.questions[application.category];
 
-                const embed = new EmbedBuilder()
-                    .setTitle(`${application.category} Application - ${user.tag}`)
-                    .setColor(0x0000ff)
-                    .setThumbnail(user.displayAvatarURL())
-                    .setTimestamp(new Date(application.submitted_at))
-                    .setFooter({ text: `User ID: ${user.id} | Application ID: ${application.id}` });
+                    const embed = new EmbedBuilder()
+                        .setTitle(`${application.category} Application - ${user.tag}`)
+                        .setColor(0x0000ff)
+                        .setThumbnail(user.displayAvatarURL())
+                        .setFooter({ text: `User ID: ${user.id} | Application ID: ${application.id}` });
+                    
+                    // Handle timestamp safely
+                    if (application.submitted_at) {
+                        try {
+                            const timestamp = new Date(application.submitted_at);
+                            if (!isNaN(timestamp.getTime())) {
+                                embed.setTimestamp(timestamp);
+                            }
+                        } catch (error) {
+                            console.error('Error parsing submitted_at timestamp:', error);
+                        }
+                    }
 
-                answers.forEach((answer, index) => {
-                    const question = questions[index];
-                    const truncatedAnswer = answer.length > 1024 ? answer.substring(0, 1020) + '...' : answer;
-                    embed.addFields({
-                        name: `Q${index + 1}: ${question}`,
-                        value: truncatedAnswer,
-                        inline: false
+                    answers.forEach((answer, index) => {
+                        const question = questions[index];
+                        const truncatedAnswer = answer.length > 1024 ? answer.substring(0, 1020) + '...' : answer;
+                        embed.addFields({
+                            name: `Q${index + 1}: ${question}`,
+                            value: truncatedAnswer,
+                            inline: false
+                        });
                     });
-                });
 
-                const acceptButton = new ButtonBuilder()
-                    .setCustomId(`application_accept_${application.id}`)
-                    .setLabel('Accept')
-                    .setStyle(ButtonStyle.Success);
+                    const acceptButton = new ButtonBuilder()
+                        .setCustomId(`application_accept_${application.id}`)
+                        .setLabel('Accept')
+                        .setStyle(ButtonStyle.Success);
 
-                const denyButton = new ButtonBuilder()
-                    .setCustomId(`application_deny_${application.id}`)
-                    .setLabel('Deny')
-                    .setStyle(ButtonStyle.Danger);
+                    const denyButton = new ButtonBuilder()
+                        .setCustomId(`application_deny_${application.id}`)
+                        .setLabel('Deny')
+                        .setStyle(ButtonStyle.Danger);
 
-                const acceptWithReasonButton = new ButtonBuilder()
-                    .setCustomId(`application_accept_reason_${application.id}`)
-                    .setLabel('Accept with Reason')
-                    .setStyle(ButtonStyle.Success);
+                    const acceptWithReasonButton = new ButtonBuilder()
+                        .setCustomId(`application_accept_reason_${application.id}`)
+                        .setLabel('Accept with Reason')
+                        .setStyle(ButtonStyle.Success);
 
-                const denyWithReasonButton = new ButtonBuilder()
-                    .setCustomId(`application_deny_reason_${application.id}`)
-                    .setLabel('Deny with Reason')
-                    .setStyle(ButtonStyle.Danger);
+                    const denyWithReasonButton = new ButtonBuilder()
+                        .setCustomId(`application_deny_reason_${application.id}`)
+                        .setLabel('Deny with Reason')
+                        .setStyle(ButtonStyle.Danger);
 
-                const ticketButton = new ButtonBuilder()
-                    .setCustomId(`application_ticket_${application.id}`)
-                    .setLabel('Open ticket with user')
-                    .setStyle(ButtonStyle.Secondary);
+                    const ticketButton = new ButtonBuilder()
+                        .setCustomId(`application_ticket_${application.id}`)
+                        .setLabel('Open ticket with user')
+                        .setStyle(ButtonStyle.Secondary);
 
-                const row1 = new ActionRowBuilder().addComponents(acceptButton, denyButton);
-                const row2 = new ActionRowBuilder().addComponents(acceptWithReasonButton, denyWithReasonButton);
-                const row3 = new ActionRowBuilder().addComponents(ticketButton);
+                    const row1 = new ActionRowBuilder().addComponents(acceptButton, denyButton);
+                    const row2 = new ActionRowBuilder().addComponents(acceptWithReasonButton, denyWithReasonButton);
+                    const row3 = new ActionRowBuilder().addComponents(ticketButton);
 
-                const reviewChannelId = this.bot.CONFIG.APPLICATION_CATEGORY_SPECIFIC[application.category] || 
-                                      this.bot.CONFIG.APPLICATION_REVIEW_CHANNEL;
-                const reviewChannel = await fetchChannel(this.bot, reviewChannelId);
+                    const reviewChannelId = this.bot.CONFIG.APPLICATION_CATEGORY_SPECIFIC[application.category] || 
+                                          this.bot.CONFIG.APPLICATION_REVIEW_CHANNEL;
+                    const reviewChannel = await fetchChannel(this.bot, reviewChannelId);
 
-                if (reviewChannel) {
-                    await reviewChannel.send({ 
-                        embeds: [embed], 
-                        components: [row1, row2, row3] 
-                    });
+                    if (reviewChannel) {
+                        await reviewChannel.send({ 
+                            embeds: [embed], 
+                            components: [row1, row2, row3] 
+                        });
+                    }
+                } catch (error) {
+                    console.error('Error posting application for review:', error);
                 }
             }
         );
@@ -764,15 +779,27 @@ class ApplicationHandler {
         );
     }
 
-    async acceptApplication(interaction, application, user) {
-        try {
-            const guild = interaction.guild;
-            const member = await guild.members.fetch(application.user_id);
-            const roleId = this.bot.RANK_ROLES[application.category];
+                async acceptApplication(interaction, application, user) {
+            try {
+                const guild = interaction.guild;
+                let roleAssigned = false;
             
-            if (roleId) {
-                await member.roles.add(roleId);
+                // Try to fetch the member and assign role if they're in the guild
+                try {
+                    const member = await guild.members.fetch(application.user_id);
+                    const roleId = this.bot.RANK_ROLES[application.category];
                 
+                    if (roleId) {
+                        await member.roles.add(roleId);
+                        roleAssigned = true;
+                        console.log(`Role ${roleId} assigned to ${user.tag}`);
+                    }
+                } catch (memberError) {
+                    console.log(`User ${user.tag} not found in guild or role assignment failed:`, memberError.message);
+                    // Continue anyway - we still want to accept the application
+                }
+            
+                // Send DM to user
                 const embed = new EmbedBuilder()
                     .setTitle(MSG.APPLICATION_ACCEPTED_TITLE)
                     .setDescription(MSG.APPLICATION_ACCEPTED_BODY(application.category))
@@ -780,17 +807,27 @@ class ApplicationHandler {
 
                 try {
                     await user.send({ embeds: [embed] });
+                    console.log(`Acceptance DM sent to ${user.tag}`);
                 } catch (error) {
                     console.log(`Could not send DM to ${user.tag}`);
                 }
 
+                // Update database
                 this.bot.db.run(
                     "UPDATE applications SET status = 'accepted', reviewed_by = ? WHERE id = ?",
-                    [interaction.user.id, application.id]
+                    [interaction.user.id, application.id],
+                    (err) => {
+                        if (err) {
+                            console.error('Error updating application in database:', err);
+                        } else {
+                            console.log(`Application ${application.id} marked as accepted in database`);
+                        }
+                    }
                 );
 
                 await this.logApplicationAction(application.id, 'accepted', interaction.user.id);
 
+                // Send promotion log
                 const promotionChannel = await fetchChannel(this.bot, this.bot.CONFIG.PROMOTION_LOG_CHANNEL);
                 if (promotionChannel) {
                     const promotionEmbed = new EmbedBuilder()
@@ -800,60 +837,70 @@ class ApplicationHandler {
                         .setTimestamp();
 
                     await promotionChannel.send({ embeds: [promotionEmbed] });
+                    console.log(`Promotion log sent for ${user.tag}`);
                 }
 
-                // Remove buttons from the application message
-                await interaction.message.edit({ components: [] });
+                // Update the application embed - do this last so database is updated first
+                await this.updateApplicationEmbed(interaction, application, 'accepted');
+                console.log(`Application embed updated for ${user.tag}`);
 
                 await interaction.reply({
                     content: MSG.APPLICATION_ACCEPT_STAFF_CONFIRM(user.tag),
                     flags: MessageFlags.Ephemeral
                 });
-            }
-        } catch (error) {
-            console.error('Error accepting application:', error);
-            await interaction.reply({ 
-                content: MSG.GENERIC_ERROR,
-                flags: MessageFlags.Ephemeral
-            });
-        }
-    }
-
-    async denyApplication(interaction, application, user) {
-        try {
-            const embed = new EmbedBuilder()
-                .setTitle(MSG.APPLICATION_DENIED_TITLE)
-                .setDescription(MSG.APPLICATION_DENIED_BODY(application.category))
-                .setColor(0xff0000);
-
-            try {
-                await user.send({ embeds: [embed] });
+                
+                console.log(`Application ${application.id} successfully accepted by ${interaction.user.tag}`);
             } catch (error) {
-                console.log(`Could not send DM to ${user.tag}`);
+                console.error('Error accepting application:', error);
+                // Try to reply with error, but don't crash if interaction is already acknowledged
+                try {
+                    await interaction.reply({ 
+                        content: MSG.GENERIC_ERROR,
+                        flags: MessageFlags.Ephemeral
+                    });
+                } catch (replyError) {
+                    console.error('Could not reply to interaction:', replyError);
+                }
             }
-
-            this.bot.db.run(
-                "UPDATE applications SET status = 'denied', reviewed_by = ? WHERE id = ?",
-                [interaction.user.id, application.id]
-            );
-
-            await this.logApplicationAction(application.id, 'denied', interaction.user.id);
-
-            // Remove buttons from the application message
-            await interaction.message.edit({ components: [] });
-            
-            await interaction.reply({
-                content: MSG.APPLICATION_DENY_STAFF_CONFIRM(user.tag),
-                flags: MessageFlags.Ephemeral
-            });
-        } catch (error) {
-            console.error('Error denying application:', error);
-            await interaction.reply({
-                content: MSG.GENERIC_ERROR,
-                flags: MessageFlags.Ephemeral
-            });
         }
-    }
+
+        async denyApplication(interaction, application, user) {
+            try {
+                // Send DM to user
+                const embed = new EmbedBuilder()
+                    .setTitle(MSG.APPLICATION_DENIED_TITLE)
+                    .setDescription(MSG.APPLICATION_DENIED_BODY(application.category))
+                    .setColor(0xff0000);
+
+                try {
+                    await user.send({ embeds: [embed] });
+                } catch (error) {
+                    console.log(`Could not send DM to ${user.tag}`);
+                }
+
+                // Update database
+                this.bot.db.run(
+                    "UPDATE applications SET status = 'denied', reviewed_by = ? WHERE id = ?",
+                    [interaction.user.id, application.id]
+                );
+
+                await this.logApplicationAction(application.id, 'denied', interaction.user.id);
+
+                // Update the application embed
+                await this.updateApplicationEmbed(interaction, application, 'denied');
+            
+                await interaction.reply({
+                    content: MSG.APPLICATION_DENY_STAFF_CONFIRM(user.tag),
+                    flags: MessageFlags.Ephemeral
+                });
+            } catch (error) {
+                console.error('Error denying application:', error);
+                await interaction.reply({
+                    content: MSG.GENERIC_ERROR,
+                    flags: MessageFlags.Ephemeral
+                });
+            }
+        }
 
     async showReasonModal(interaction, action, applicationId) {
         const modal = new ModalBuilder()
@@ -926,15 +973,27 @@ class ApplicationHandler {
         );
     }
 
-    async acceptApplicationWithReason(interaction, application, user, reason) {
-        try {
-            const guild = interaction.guild;
-            const member = await guild.members.fetch(application.user_id);
-            const roleId = this.bot.RANK_ROLES[application.category];
+                async acceptApplicationWithReason(interaction, application, user, reason) {
+            try {
+                const guild = interaction.guild;
+                let roleAssigned = false;
             
-            if (roleId) {
-                await member.roles.add(roleId);
+                // Try to fetch the member and assign role if they're in the guild
+                try {
+                    const member = await guild.members.fetch(application.user_id);
+                    const roleId = this.bot.RANK_ROLES[application.category];
+                
+                    if (roleId) {
+                        await member.roles.add(roleId);
+                        roleAssigned = true;
+                        console.log(`Role ${roleId} assigned to ${user.tag} (with reason)`);
+                    }
+                } catch (memberError) {
+                    console.log(`User ${user.tag} not found in guild or role assignment failed:`, memberError.message);
+                    // Continue anyway - we still want to accept the application
+                }
 
+                // Send DM to user
                 const embed = new EmbedBuilder()
                     .setTitle(MSG.APPLICATION_ACCEPTED_TITLE)
                     .setDescription(MSG.APPLICATION_ACCEPTED_REASON_BODY(application.category, reason))
@@ -942,35 +1001,51 @@ class ApplicationHandler {
 
                 try {
                     await user.send({ embeds: [embed] });
+                    console.log(`Acceptance DM with reason sent to ${user.tag}`);
                 } catch (error) {
                     console.log(`Could not send DM to ${user.tag}`);
                 }
 
+                // Update database
                 this.bot.db.run(
                     "UPDATE applications SET status = 'accepted', reviewed_by = ?, review_reason = ? WHERE id = ?",
-                    [interaction.user.id, reason, application.id]
+                    [interaction.user.id, reason, application.id],
+                    (err) => {
+                        if (err) {
+                            console.error('Error updating application in database (with reason):', err);
+                        } else {
+                            console.log(`Application ${application.id} marked as accepted with reason in database`);
+                        }
+                    }
                 );
 
                 await this.logApplicationAction(application.id, 'accepted_with_reason', interaction.user.id, reason);
 
-                // Remove buttons from the application message
-                await interaction.message.edit({ components: [] });
+                // Update the application embed with reason
+                await this.updateApplicationEmbed(interaction, application, 'accepted', reason);
+                console.log(`Application embed with reason updated for ${user.tag}`);
 
                 await interaction.reply({
                     content: MSG.APPLICATION_ACCEPT_STAFF_CONFIRM(user.tag),
                     flags: MessageFlags.Ephemeral
                 });
+                
+                console.log(`Application ${application.id} successfully accepted with reason by ${interaction.user.tag}`);
+            } catch (error) {
+                console.error('Error accepting application with reason:', error);
+                // Try to reply with error, but don't crash if interaction is already acknowledged
+                try {
+                    await interaction.reply({ 
+                        content: MSG.GENERIC_ERROR,
+                        flags: MessageFlags.Ephemeral
+                    });
+                } catch (replyError) {
+                    console.error('Could not reply to interaction (with reason):', replyError);
+                }
             }
-        } catch (error) {
-            console.error('Error accepting application with reason:', error);
-            await interaction.reply({ 
-                content: MSG.GENERIC_ERROR,
-                flags: MessageFlags.Ephemeral
-            });
         }
-    }
 
-    async denyApplicationWithReason(interaction, application, user, reason) {
+        async denyApplicationWithReason(interaction, application, user, reason) {
         try {
             const embed = new EmbedBuilder()
                 .setTitle(MSG.APPLICATION_DENIED_TITLE)
@@ -990,8 +1065,8 @@ class ApplicationHandler {
 
             await this.logApplicationAction(application.id, 'denied_with_reason', interaction.user.id, reason);
 
-            // Remove buttons from the application message
-            await interaction.message.edit({ components: [] });
+                        // Use the new updateApplicationEmbed method with reason
+            await this.updateApplicationEmbed(interaction, application, 'denied', reason);
             
             await interaction.reply({
                 content: MSG.APPLICATION_DENY_STAFF_CONFIRM(user.tag),
@@ -1169,7 +1244,7 @@ class ApplicationHandler {
         );
     }
 
-    async checkSessions() {
+        async checkSessions() {
         const now = new Date();
         for (const [userId, session] of this.sessions.entries()) {
             if (now > new Date(session.expiresAt)) {
@@ -1185,6 +1260,113 @@ class ApplicationHandler {
             }
         }
     }
+
+                async updateApplicationEmbed(interaction, application, status, reason = null) {
+            try {
+                // Check if the interaction message still exists
+                if (!interaction.message || !interaction.message.editable) {
+                    console.log('Cannot edit message - message not found or not editable');
+                    return;
+                }
+            
+                // Get the original embed
+                const originalEmbed = interaction.message.embeds[0];
+                if (!originalEmbed) {
+                    console.log('No embed found in message');
+                    return;
+                }
+            
+                // Determine color based on status
+                let color;
+                switch (status) {
+                    case 'accepted':
+                        color = 0x57F287; // Green
+                        break;
+                    case 'denied':
+                        color = 0xED4245; // Red
+                        break;
+                    case 'pending':
+                        color = 0xFEE75C; // Yellow
+                        break;
+                    default:
+                        color = originalEmbed.color || 0x0000ff;
+                }
+            
+                // Create new embed based on original
+                const newEmbed = new EmbedBuilder()
+                    .setTitle(originalEmbed.title || 'Application Review')
+                    .setColor(color);
+            
+                // Handle timestamp safely - don't copy timestamp from original embed
+                // Instead use current timestamp or none to avoid validation errors
+                const currentTimestamp = new Date();
+                newEmbed.setTimestamp(currentTimestamp);
+            
+                // Copy footer if it exists and has text
+                if (originalEmbed.footer && originalEmbed.footer.text) {
+                    newEmbed.setFooter({ text: originalEmbed.footer.text });
+                }
+            
+                // Copy fields safely
+                if (originalEmbed.fields && Array.isArray(originalEmbed.fields)) {
+                    originalEmbed.fields.forEach(field => {
+                        if (field && field.name && field.value) {
+                            newEmbed.addFields({
+                                name: field.name,
+                                value: field.value.length > 1024 ? field.value.substring(0, 1020) + '...' : field.value,
+                                inline: field.inline || false
+                            });
+                        }
+                    });
+                }
+            
+                // Add reason if provided
+                if (reason && reason.trim()) {
+                    newEmbed.addFields({
+                        name: 'Reason',
+                        value: reason.length > 1024 ? reason.substring(0, 1020) + '...' : reason,
+                        inline: false
+                    });
+                }
+            
+                // Add reviewer if known
+                if (interaction.user) {
+                    newEmbed.addFields({
+                        name: 'Decided by',
+                        value: `${interaction.user.tag} (${interaction.user.id})`,
+                        inline: true
+                    });
+                }
+            
+                // Add status field
+                newEmbed.addFields({
+                    name: 'Status',
+                    value: status.charAt(0).toUpperCase() + status.slice(1),
+                    inline: true
+                });
+            
+                // Update message (remove buttons)
+                await interaction.message.edit({ embeds: [newEmbed], components: [] });
+            } catch (error) {
+                console.error('Error updating application embed:', error);
+                // Don't rethrow the error - we don't want to fail the whole acceptance
+                // Try a simpler approach if the complex one fails
+                try {
+                    if (interaction.message && interaction.message.editable) {
+                        // Create a very simple embed
+                        const simpleEmbed = new EmbedBuilder()
+                            .setTitle('Application Review')
+                            .setDescription(`Application ${status === 'accepted' ? 'accepted' : 'denied'} by ${interaction.user?.tag || 'staff'}`)
+                            .setColor(status === 'accepted' ? 0x57F287 : 0xED4245)
+                            .setTimestamp();
+                        
+                        await interaction.message.edit({ embeds: [simpleEmbed], components: [] });
+                    }
+                } catch (simpleError) {
+                    console.error('Even simple embed update failed:', simpleError);
+                }
+            }
+        }
 }
 
 module.exports = ApplicationHandler;
