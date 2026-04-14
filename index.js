@@ -37,7 +37,7 @@ class TicketBot {
         this.MANAGEMENT_ROLE = CONFIG.MANAGEMENT_ROLE;
         this.ROLE_HIERARCHY  = CONFIG.ROLE_HIERARCHY;
         this.STAFF_RANKS     = CONFIG.STAFF_RANKS;
-        
+
         this.initDatabase();
         this.setupEventListeners();
     }
@@ -54,7 +54,6 @@ class TicketBot {
     }
 
     createTables() {
-        // Tickets table
         this.db.run(`CREATE TABLE IF NOT EXISTS tickets (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id TEXT NOT NULL,
@@ -65,7 +64,6 @@ class TicketBot {
             closed_at DATETIME
         )`);
 
-        // Ticket bans table
         this.db.run(`CREATE TABLE IF NOT EXISTS ticket_bans (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id TEXT NOT NULL,
@@ -73,7 +71,6 @@ class TicketBot {
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )`);
 
-        // Punishments table
         this.db.run(`CREATE TABLE IF NOT EXISTS punishments (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id TEXT NOT NULL,
@@ -86,7 +83,6 @@ class TicketBot {
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )`);
 
-        // Report bans table
         this.db.run(`CREATE TABLE IF NOT EXISTS report_bans (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id TEXT NOT NULL,
@@ -94,7 +90,6 @@ class TicketBot {
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )`);
 
-        // Applications table
         this.db.run(`CREATE TABLE IF NOT EXISTS applications (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id TEXT NOT NULL,
@@ -110,7 +105,6 @@ class TicketBot {
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )`);
 
-        // Application logs table
         this.db.run(`CREATE TABLE IF NOT EXISTS application_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             application_id INTEGER,
@@ -147,7 +141,6 @@ class TicketBot {
     login() {
         if (!process.env.BOT_TOKEN) {
             console.error('BOT_TOKEN not found in .env file!');
-            console.error('Please check your .env file in:', __dirname);
             process.exit(1);
         }
         console.log('Bot token loaded, starting bot...');

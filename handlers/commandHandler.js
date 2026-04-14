@@ -468,6 +468,10 @@ module.exports = {
                 ]
             },
             {
+                name: 'hoster',
+                description: 'Show hosting information'
+            },
+            {
                 name: 'embed',
                 description: 'Send a custom embed message',
                 options: [
@@ -580,6 +584,9 @@ module.exports = {
             case 'embed':
                 await handleEmbedCommand(interaction, options, bot);
                 break;
+            case 'hoster':
+                await handleHosterCommand(interaction);
+                break;
         }
     }
 };
@@ -670,12 +677,12 @@ async function handleCloseRequest(interaction, channel, bot) {
             .setTitle("Close Request Sent")
             .setDescription(MSG.TICKET_CLOSE_REQUEST_SENT(channel))
             .setColor(0x00ff00);
-        await interaction.reply({ embeds: [successEmbed], ephemeral: true });
+        await interaction.reply({ embeds: [successEmbed], flags: MessageFlags.Ephemeral });
     });
 }
 
 async function handleTicketCloseCommand(interaction, channel, bot) {
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     bot.db.get("SELECT category FROM tickets WHERE channel_id = ?", [channel.id], async (err, ticket) => {
         if (err) {
@@ -866,11 +873,13 @@ async function handleTicketUnban(interaction, options, bot) {
 }
 
 async function handleStatusCommand(interaction, bot) {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
     try {
-        const status = await MinecraftServerListPing.ping(4, bot.CONFIG.MINECRAFT_SERVER, bot.CONFIG.MINECRAFT_PORT, 3000);
-        
+        const status = await MinecraftServerListPing.ping(4, bot.CONFIG.MINECRAFT_SERVER, bot.CONFIG.MINECRAFT_PORT, 5000);
+
         const embed = new EmbedBuilder()
-            .setTitle(`Server Status - ${bot.CONFIG.MINECRAFT_SERVER}`)
+            .setTitle(`${bot.CONFIG.MINECRAFT_SERVER} — Online`)
             .setColor(0x00ff00)
             .setTimestamp()
             .addFields(
@@ -892,18 +901,18 @@ async function handleStatusCommand(interaction, bot) {
             } else if (status.description.extra) {
                 motd = status.description.extra.map(extra => cleanMinecraftText(extra.text)).join('');
             }
-            embed.setDescription(`**MOTD:** ${motd}`);
+            if (motd) embed.setDescription(`**MOTD:** ${motd}`);
         }
 
-        await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+        await interaction.editReply({ embeds: [embed] });
 
     } catch (error) {
         console.error('Error fetching Minecraft status:', error);
         const embed = new EmbedBuilder()
-            .setTitle("Server Offline")
-            .setDescription("The Minecraft server is currently offline or unreachable.")
+            .setTitle(`${bot.CONFIG.MINECRAFT_SERVER} — Offline`)
+            .setDescription("The server could not be reached. It may be offline or starting up.")
             .setColor(0xff0000);
-        await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+        await interaction.editReply({ embeds: [embed] });
     }
 }
 
@@ -944,10 +953,10 @@ async function handleAboutCommand(interaction, bot) {
                 { name: "Uptime",               value: uptimeStr,                           inline: true }
             );
 
-        await interaction.reply({ embeds: [embed], ephemeral: true });
+        await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
     } catch (err) {
         console.error('Error fetching bot statistics:', err);
-        await interaction.reply({ content: MSG.GENERIC_DB_ERROR, ephemeral: true });
+        await interaction.reply({ content: MSG.GENERIC_DB_ERROR, flags: MessageFlags.Ephemeral });
     }
 }
 
@@ -1006,6 +1015,8 @@ async function handleBan(interaction, options, bot) {
         await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
         return;
     }
+
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     try {
         let expiresAt = null;
@@ -1081,7 +1092,7 @@ async function handleBan(interaction, options, bot) {
             embed.addFields({ name: "Proof", value: proof, inline: true });
         }
 
-        await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+        await interaction.editReply({ embeds: [embed] });
 
     } catch (error) {
         console.error('Error banning user:', error);
@@ -1089,7 +1100,7 @@ async function handleBan(interaction, options, bot) {
             .setTitle("Error")
             .setDescription(MSG.BOT_NO_PERMISSION)
             .setColor(0xff0000);
-        await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+        await interaction.editReply({ embeds: [embed] });
     }
 }
 
@@ -1105,6 +1116,8 @@ async function handleUnban(interaction, options, bot) {
         await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
         return;
     }
+
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     try {
         const user = await bot.client.users.fetch(userId);
@@ -1154,7 +1167,7 @@ async function handleUnban(interaction, options, bot) {
             .setTitle("User Unbanned")
             .setDescription(MSG.UNBAN_SUCCESS_BODY(user.username, reason))
             .setColor(0x00ff00);
-        await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+        await interaction.editReply({ embeds: [embed] });
 
     } catch (error) {
         console.error('Error unbanning user:', error);
@@ -1162,7 +1175,7 @@ async function handleUnban(interaction, options, bot) {
             .setTitle("Error")
             .setDescription(MSG.UNBAN_INVALID_USER)
             .setColor(0xff0000);
-        await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+        await interaction.editReply({ embeds: [embed] });
     }
 }
 
@@ -1197,6 +1210,8 @@ async function handleKick(interaction, options, bot) {
         await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
         return;
     }
+
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     try {
         const member = await interaction.guild.members.fetch(user.id);
@@ -1255,7 +1270,7 @@ async function handleKick(interaction, options, bot) {
             embed.addFields({ name: "Proof", value: proof, inline: true });
         }
 
-        await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+        await interaction.editReply({ embeds: [embed] });
 
     } catch (error) {
         console.error('Error kicking user:', error);
@@ -1263,7 +1278,7 @@ async function handleKick(interaction, options, bot) {
             .setTitle("Error")
             .setDescription(MSG.BOT_NO_PERMISSION)
             .setColor(0xff0000);
-        await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+        await interaction.editReply({ embeds: [embed] });
     }
 }
 
@@ -1299,6 +1314,8 @@ async function handleMute(interaction, options, bot) {
         await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
         return;
     }
+
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     try {
         const member = await interaction.guild.members.fetch(user.id);
@@ -1379,7 +1396,7 @@ async function handleMute(interaction, options, bot) {
             embed.addFields({ name: "Proof", value: proof, inline: true });
         }
 
-        await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+        await interaction.editReply({ embeds: [embed] });
 
     } catch (error) {
         console.error('Error muting user:', error);
@@ -1387,7 +1404,7 @@ async function handleMute(interaction, options, bot) {
             .setTitle("Error")
             .setDescription(MSG.BOT_NO_PERMISSION)
             .setColor(0xff0000);
-        await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+        await interaction.editReply({ embeds: [embed] });
     }
 }
 
@@ -1404,6 +1421,8 @@ async function handleUnmute(interaction, options, bot) {
         return;
     }
 
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
     try {
         const member = await interaction.guild.members.fetch(user.id);
 
@@ -1412,7 +1431,7 @@ async function handleUnmute(interaction, options, bot) {
                 .setTitle("Error")
                 .setDescription(MSG.NOT_MUTED)
                 .setColor(0xff0000);
-            await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+            await interaction.editReply({ embeds: [embed] });
             return;
         }
 
@@ -1461,7 +1480,7 @@ async function handleUnmute(interaction, options, bot) {
             .setTitle("User Unmuted")
             .setDescription(MSG.UNMUTE_SUCCESS_BODY(user))
             .setColor(0x00ff00);
-        await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+        await interaction.editReply({ embeds: [embed] });
 
     } catch (error) {
         console.error('Error unmuting user:', error);
@@ -1469,7 +1488,7 @@ async function handleUnmute(interaction, options, bot) {
             .setTitle("Error")
             .setDescription(MSG.BOT_NO_PERMISSION)
             .setColor(0xff0000);
-        await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+        await interaction.editReply({ embeds: [embed] });
     }
 }
 
@@ -1482,6 +1501,8 @@ async function handlePromote(interaction, options, bot) {
         await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
         return;
     }
+
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     const user = options.getUser('discordname');
     const rank = options.getString('rank');
@@ -1506,7 +1527,7 @@ async function handlePromote(interaction, options, bot) {
                 .setTitle("Error")
                 .setDescription(`Role for rank "${rank}" not found.`)
                 .setColor(0xff0000);
-            await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+            await interaction.editReply({ embeds: [embed] });
             return;
         }
 
@@ -1516,7 +1537,7 @@ async function handlePromote(interaction, options, bot) {
                 .setTitle("Error")
                 .setDescription(`Role with ID ${newRoleId} not found in guild.`)
                 .setColor(0xff0000);
-            await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+            await interaction.editReply({ embeds: [embed] });
             return;
         }
 
@@ -1560,7 +1581,7 @@ async function handlePromote(interaction, options, bot) {
             .setTitle("User Promoted")
             .setDescription(MSG.PROMOTE_SUCCESS(user, rank))
             .setColor(0x00ff00);
-        await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+        await interaction.editReply({ embeds: [embed] });
 
     } catch (error) {
         console.error('Error promoting user:', error);
@@ -1568,7 +1589,7 @@ async function handlePromote(interaction, options, bot) {
             .setTitle("Error")
             .setDescription(MSG.GENERIC_ERROR)
             .setColor(0xff0000);
-        await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+        await interaction.editReply({ embeds: [embed] });
     }
 }
 
@@ -1581,6 +1602,8 @@ async function handleDemote(interaction, options, bot) {
         await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
         return;
     }
+
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     const user = options.getUser('user');
     const rank = options.getString('rank');
@@ -1628,7 +1651,7 @@ async function handleDemote(interaction, options, bot) {
                 .setTitle("User Demoted")
                 .setDescription(MSG.DEMOTE_SUCCESS(user, 'Member'))
                 .setColor(0xffa500);
-            await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+            await interaction.editReply({ embeds: [embed] });
 
         } else {
             const allRankRoles = Object.values(bot.RANK_ROLES);
@@ -1654,7 +1677,7 @@ async function handleDemote(interaction, options, bot) {
                     .setTitle("Error")
                     .setDescription(`Role for rank "${rank}" not found.`)
                     .setColor(0xff0000);
-                await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+                await interaction.editReply({ embeds: [embed] });
                 return;
             }
 
@@ -1664,7 +1687,7 @@ async function handleDemote(interaction, options, bot) {
                     .setTitle("Error")
                     .setDescription(`Role with ID ${newRoleId} not found in guild.`)
                     .setColor(0xff0000);
-                await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+                await interaction.editReply({ embeds: [embed] });
                 return;
             }
 
@@ -1708,7 +1731,7 @@ async function handleDemote(interaction, options, bot) {
                 .setTitle("User Demoted")
                 .setDescription(MSG.DEMOTE_SUCCESS(user, rank))
                 .setColor(0xffa500);
-            await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+            await interaction.editReply({ embeds: [embed] });
         }
 
     } catch (error) {
@@ -1717,7 +1740,7 @@ async function handleDemote(interaction, options, bot) {
             .setTitle("Error")
             .setDescription(MSG.GENERIC_ERROR)
             .setColor(0xff0000);
-        await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+        await interaction.editReply({ embeds: [embed] });
     }
 }
 
@@ -1859,7 +1882,7 @@ async function handleReportCommand(interaction, options, bot) {
             .setTitle("Report Submitted")
             .setDescription(`Your report against ${user.tag} has been submitted to the staff team.`)
             .setColor(0x00ff00);
-        await interaction.reply({ embeds: [successEmbed], ephemeral: true });
+        await interaction.reply({ embeds: [successEmbed], flags: MessageFlags.Ephemeral });
     });
 }
 
@@ -1982,7 +2005,7 @@ async function handleProofCommand(interaction, options, bot) {
 
     const logChannel = await fetchChannel(bot, bot.CONFIG.LOG_CHANNEL);
     if (!logChannel) {
-        await interaction.reply({ content: MSG.GENERIC_ERROR, ephemeral: true });
+        await interaction.reply({ content: MSG.GENERIC_ERROR, flags: MessageFlags.Ephemeral });
         return;
     }
 
@@ -1991,7 +2014,7 @@ async function handleProofCommand(interaction, options, bot) {
         const embed = message.embeds[0];
 
         if (!embed) {
-            await interaction.reply({ content: "No embed found for that message ID.", ephemeral: true });
+            await interaction.reply({ content: "No embed found for that message ID.", flags: MessageFlags.Ephemeral });
             return;
         }
 
@@ -1999,10 +2022,10 @@ async function handleProofCommand(interaction, options, bot) {
             .addFields({ name: "Proof", value: proofUrl, inline: true });
 
         await message.edit({ embeds: [newEmbed] });
-        await interaction.reply({ content: "Proof added.", ephemeral: true });
+        await interaction.reply({ content: "Proof added.", flags: MessageFlags.Ephemeral });
     } catch (error) {
         console.error('Error adding proof:', error);
-        await interaction.reply({ content: "Couldn't find that message. Double-check the message ID.", ephemeral: true });
+        await interaction.reply({ content: "Couldn't find that message. Double-check the message ID.", flags: MessageFlags.Ephemeral });
     }
 }
 
@@ -2318,4 +2341,13 @@ async function handleEmbedCommand(interaction, options, bot) {
                 .setColor(0xff0000)
         ], flags: MessageFlags.Ephemeral });
     }
+}
+
+async function handleHosterCommand(interaction) {
+    const embed = new EmbedBuilder()
+        .setTitle("Hosting")
+        .setDescription("example.invalid is powered by Index-Hosting.com\nUse Code **GRAVI** for 10% off.")
+        .setColor(0x0000ff);
+
+    await interaction.reply({ embeds: [embed] });
 }

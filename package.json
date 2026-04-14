@@ -5,8 +5,7 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "dev": "nodemon index.js",
-    "setup": "node scripts/setup.js"
+    "dev": "nodemon index.js"
   },
   "dependencies": {
     "discord.js": "^14.14.1",

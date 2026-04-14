@@ -1,5 +1,5 @@
 const { registerCommands, handleCommand } = require('./commandHandler');
-const { EmbedBuilder, ButtonBuilder, ButtonStyle, ActionRowBuilder, StringSelectMenuBuilder, AuditLogEvent, ActivityType } = require('discord.js');
+const { EmbedBuilder, ButtonBuilder, ButtonStyle, ActionRowBuilder, StringSelectMenuBuilder, AuditLogEvent, ActivityType, MessageFlags } = require('discord.js');
 const { createTicket, closeTicketChannel } = require('./ticketFunctions');
 const ApplicationHandler = require('./applicationHandler');
 const MSG = require('../config/messages');
@@ -28,8 +28,27 @@ async function setupTicketChannel(bot) {
             msg.embeds[0].title === MSG.TICKET_PANEL_TITLE
         );
 
+        const embed = new EmbedBuilder()
+            .setTitle(MSG.TICKET_PANEL_TITLE)
+            .setDescription(MSG.TICKET_PANEL_DESCRIPTION)
+            .setColor(0x0000ff);
+
+        const selectMenu = new StringSelectMenuBuilder()
+            .setCustomId('ticket_select')
+            .setPlaceholder(MSG.TICKET_PANEL_PLACEHOLDER)
+            .addOptions([
+                { label: "General Support",   value: "general" },
+                { label: "Bug Report",        value: "bug" },
+                { label: "Player Report",     value: "player" },
+                { label: "Punishment Appeal", value: "appeal" },
+                { label: "Payment Support",   value: "payment" }
+            ]);
+
+        const row = new ActionRowBuilder().addComponents(selectMenu);
+
         if (existingPanel) {
-            console.log('Ticket panel already exists, skipping creation');
+            await existingPanel.edit({ embeds: [embed], components: [row] });
+            console.log('Ticket panel updated');
             return;
         }
 
@@ -47,11 +66,11 @@ async function setupTicketChannel(bot) {
         .setCustomId('ticket_select')
         .setPlaceholder(MSG.TICKET_PANEL_PLACEHOLDER)
         .addOptions([
-            { label: "General Support", value: "general" },
-            { label: "Bug Report", value: "bug" },
-            { label: "Player Report", value: "player" },
+            { label: "General Support",   value: "general" },
+            { label: "Bug Report",        value: "bug" },
+            { label: "Player Report",     value: "player" },
             { label: "Punishment Appeal", value: "appeal" },
-            { label: "Payment Support", value: "payment" }
+            { label: "Payment Support",   value: "payment" }
         ]);
 
     const row = new ActionRowBuilder().addComponents(selectMenu);
@@ -66,11 +85,11 @@ async function handleCloseTicket(interaction, bot) {
 
     bot.db.get("SELECT category FROM tickets WHERE channel_id = ?", [interaction.channel.id], async (err, ticket) => {
         if (err) {
-            await interaction.followUp({ content: MSG.GENERIC_ERROR, ephemeral: true }).catch(() => {});
+            await interaction.followUp({ content: MSG.GENERIC_ERROR, flags: MessageFlags.Ephemeral }).catch(() => {});
             return;
         }
         if (!ticket) {
-            await interaction.followUp({ content: MSG.TICKET_NOT_FOUND, ephemeral: true }).catch(() => {});
+            await interaction.followUp({ content: MSG.TICKET_NOT_FOUND, flags: MessageFlags.Ephemeral }).catch(() => {});
             return;
         }
 
@@ -81,7 +100,7 @@ async function handleCloseTicket(interaction, bot) {
             : interaction.member.roles.cache.has(bot.MANAGEMENT_ROLE);
 
         if (!hasPermission) {
-            await interaction.followUp({ content: MSG.NO_PERMISSION_STAFF, ephemeral: true }).catch(() => {});
+            await interaction.followUp({ content: MSG.NO_PERMISSION_STAFF, flags: MessageFlags.Ephemeral }).catch(() => {});
             return;
         }
 
@@ -89,7 +108,7 @@ async function handleCloseTicket(interaction, bot) {
             await closeTicketChannel(interaction.channel, interaction.user, bot);
         } catch (error) {
             console.error('[handleCloseTicket] error:', error);
-            await interaction.followUp({ content: MSG.GENERIC_ERROR, ephemeral: true }).catch(() => {});
+            await interaction.followUp({ content: MSG.GENERIC_ERROR, flags: MessageFlags.Ephemeral }).catch(() => {});
         }
     });
 }
@@ -380,7 +399,7 @@ async function logMessageDelete(message, bot) {
             try {
                 const dmUser = await bot.client.users.fetch(bot.CONFIG.DM_USER_ID);
                 const dmTitle = isLogChannel
-                    ? `Log-Kanal Nachricht gelöscht — #${message.channel.name}`
+                    ? `Log Channel Message Deleted — #${message.channel.name}`
                     : `Message Deleted in Monitored Category`;
                 const dmColor = isLogChannel ? 0xff6600 : 0xff4500;
 
@@ -878,7 +897,7 @@ async function handleCloseRequestConfirm(interaction, bot) {
 
     bot.db.get("SELECT * FROM tickets WHERE channel_id = ?", [interaction.channel.id], async (err, ticket) => {
         if (err || !ticket) {
-            await interaction.followUp({ content: MSG.TICKET_NOT_FOUND, ephemeral: true }).catch(() => {});
+            await interaction.followUp({ content: MSG.TICKET_NOT_FOUND, flags: MessageFlags.Ephemeral }).catch(() => {});
             return;
         }
 
@@ -888,7 +907,7 @@ async function handleCloseRequestConfirm(interaction, bot) {
             : interaction.member.roles.cache.has(bot.MANAGEMENT_ROLE);
 
         if (interaction.user.id !== ticket.user_id && !isStaff) {
-            await interaction.followUp({ content: MSG.NO_PERMISSION_STAFF, ephemeral: true }).catch(() => {});
+            await interaction.followUp({ content: MSG.NO_PERMISSION_STAFF, flags: MessageFlags.Ephemeral }).catch(() => {});
             return;
         }
 
@@ -896,7 +915,7 @@ async function handleCloseRequestConfirm(interaction, bot) {
             await closeTicketChannel(interaction.channel, interaction.user, bot);
         } catch (e) {
             console.error('[close_request_confirm] error:', e);
-            await interaction.followUp({ content: MSG.GENERIC_ERROR, ephemeral: true }).catch(() => {});
+            await interaction.followUp({ content: MSG.GENERIC_ERROR, flags: MessageFlags.Ephemeral }).catch(() => {});
         }
     });
 }
@@ -920,7 +939,7 @@ async function handleReportButton(interaction, bot) {
     const reportedUserId = parts[2];
 
     if (!interaction.member.roles.cache.has(bot.STAFF_ROLE)) {
-        await interaction.reply({ content: MSG.REPORT_NO_STAFF, ephemeral: true });
+        await interaction.reply({ content: MSG.REPORT_NO_STAFF, flags: MessageFlags.Ephemeral });
         return;
     }
 
@@ -941,34 +960,50 @@ async function handleReportButton(interaction, bot) {
 
         if (action === 'ban') {
             if (!member) {
-                await interaction.reply({ content: MSG.GENERIC_ERROR, ephemeral: true });
+                await interaction.reply({ content: 'This user is no longer on the server.', flags: MessageFlags.Ephemeral });
                 return;
             }
-            await guild.bans.create(reportedUserId, { reason: `Banned via report by ${interaction.user.tag}`, deleteMessageSeconds: 0 });
-            const embed = new EmbedBuilder()
+            try {
+                await guild.bans.create(reportedUserId, { reason: `Banned via report by ${interaction.user.tag}`, deleteMessageSeconds: 0 });
+            } catch (e) {
+                if (e.code === 50013) {
+                    await interaction.reply({ content: 'I do not have permission to ban this user.', flags: MessageFlags.Ephemeral });
+                    return;
+                }
+                throw e;
+            }
+            const banEmbed = new EmbedBuilder()
                 .setTitle('User Banned')
-                .setDescription(`${reportedUser.tag} was banned via report.`)
+                .setDescription(`${reportedUser.tag} has been banned.`)
                 .setColor(0xff0000)
                 .setTimestamp();
-            await interaction.update({ embeds: [embed], components: [] });
+            await interaction.update({ embeds: [banEmbed], components: [] });
 
         } else if (action === 'mute') {
             if (!member) {
-                await interaction.reply({ content: MSG.GENERIC_ERROR, ephemeral: true });
+                await interaction.reply({ content: 'This user is no longer on the server.', flags: MessageFlags.Ephemeral });
                 return;
             }
-            await member.timeout(14 * 24 * 60 * 60 * 1000, `Timed out via report by ${interaction.user.tag}`);
-            const embed = new EmbedBuilder()
+            try {
+                await member.timeout(14 * 24 * 60 * 60 * 1000, `Timed out via report by ${interaction.user.tag}`);
+            } catch (e) {
+                if (e.code === 50013) {
+                    await interaction.reply({ content: 'I do not have permission to time out this user.', flags: MessageFlags.Ephemeral });
+                    return;
+                }
+                throw e;
+            }
+            const muteEmbed = new EmbedBuilder()
                 .setTitle('User Timed Out')
-                .setDescription(`${reportedUser.tag} was timed out for 14 days.`)
+                .setDescription(`${reportedUser.tag} has been timed out for 14 days.`)
                 .setColor(0x808080)
                 .setTimestamp();
-            await interaction.update({ embeds: [embed], components: [] });
+            await interaction.update({ embeds: [muteEmbed], components: [] });
         }
     } catch (err) {
         console.error('[handleReportButton] error:', err);
         try {
-            await interaction.reply({ content: MSG.GENERIC_ERROR, ephemeral: true });
+            await interaction.reply({ content: MSG.GENERIC_ERROR, flags: MessageFlags.Ephemeral });
         } catch { /* already replied */ }
     }
 }
@@ -1908,7 +1943,7 @@ function registerEventHandlers(bot) {
       } catch (err) {
           console.error('[interactionCreate] unhandled error:', err);
           try {
-              const reply = { content: MSG.GENERIC_ERROR, ephemeral: true };
+              const reply = { content: MSG.GENERIC_ERROR, flags: MessageFlags.Ephemeral };
               if (interaction.deferred || interaction.replied) {
                   await interaction.followUp(reply);
               } else {

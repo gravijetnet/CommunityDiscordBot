@@ -1,57 +1,59 @@
 {
     "_docs": {
-        "_about":                    "All Discord IDs and server settings live here. config.js loads this file and flattens it so the rest of the bot can use values directly (e.g. bot.CONFIG.TICKET_CHANNEL).",
-        "APPLICATION_ID":            "Your bot's application ID. Discord Dev Portal → Your App → General Information → Application ID.",
-        "GUILD_ID":                  "The Discord server (guild) ID. Right-click the server icon → Copy Server ID. Requires Dev Mode to be enabled.",
-        "MINECRAFT_SERVER":          "Hostname or IP of the Minecraft server shown in /status.",
-        "MINECRAFT_PORT":            "Query port of the Minecraft server (default Java: 25565).",
-        "PANEL_MESSAGE_ID":          "Reserved — leave null. Used internally to track the ticket panel message.",
-        "DM_USER_ID":                "User ID that receives a private DM whenever a message is deleted inside MONITORED_CATEGORY. Useful for silent admin alerts.",
+        "_about":                    "All Discord IDs and server settings live here. config.js loads this file and flattens it so the rest of the bot can access values directly.",
+        "APPLICATION_ID":            "Your bot application ID. Discord Developer Portal → Your App → General Information → Application ID.",
+        "GUILD_ID":                  "The Discord server ID. Right-click the server icon → Copy Server ID. Requires Developer Mode enabled.",
+        "MINECRAFT_SERVER":          "Hostname or IP of the Minecraft server shown by /status.",
+        "MINECRAFT_PORT":            "Query port of the Minecraft server (Java default: 25565).",
+        "PANEL_MESSAGE_ID":          "Reserved internally — leave null. Used internally to track the ticket panel message.",
+        "APPLICATION_TIMEOUT_HOURS": "Number of hours an applicant has to complete their application before it expires.",
+        "DM_USER_ID":                "User ID that receives a private DM when a message is deleted in MONITORED_CATEGORY.",
         "CHANNELS": {
             "_about":                       "All channel IDs the bot reads from or writes to.",
             "TICKET_CHANNEL":               "Channel where the ticket selection panel is posted (dropdown to open a ticket).",
             "SUPPORT_CATEGORY":             "Category ID under which new ticket channels are automatically created.",
-            "TRANSCRIPT_CHANNEL":           "Channel where ticket transcripts (text files + summary embeds) are archived on close.",
-            "LOG_CHANNEL":                  "Primary moderation log channel — receives ban / kick / mute / unmute events.",
+            "TRANSCRIPT_CHANNEL":           "Channel where ticket transcripts (text files + summary embeds) are archived after closing.",
+            "LOG_CHANNEL":                  "Primary moderation log channel — receives ban/kick/mute/unmute events.",
             "MESSAGE_LOG_CHANNEL":          "Logs every message deletion and edit.",
-            "CHANNEL_LOG_CHANNEL":          "Logs channel creation, deletion, and edits (name, topic, NSFW, slowmode, ...).",
-            "ROLE_LOG_CHANNEL":             "Logs role creation, deletion, and updates (name, color, permissions, ...).",
+            "CHANNEL_LOG_CHANNEL":          "Logs channel creations, deletions, and edits.",
+            "ROLE_LOG_CHANNEL":             "Logs role creations, deletions, and updates.",
             "MEMBER_LOG_CHANNEL":           "Logs members joining and leaving the server.",
-            "USER_LOG_CHANNEL":             "Logs user-level changes: username, discriminator, avatar updates.",
+            "USER_LOG_CHANNEL":             "Logs user-level changes: username and avatar updates.",
             "WELCOME_CHANNEL":              "Channel where a welcome message is sent when a new member joins.",
-            "MONITORED_CATEGORY":           "Category ID whose message deletions trigger an extra DM alert to DM_USER_ID.",
+            "MONITORED_CATEGORY":           "Category ID whose message deletions trigger an extra DM notification to DM_USER_ID.",
             "PROMOTION_LOG_CHANNEL":        "Channel where promotion and demotion announcements are posted.",
-            "REPORT_CHANNEL":               "Channel where /report submissions are forwarded to staff.",
+            "REPORT_CHANNEL":               "Channel where /report submissions are forwarded.",
             "APPLICATION_PANEL_CHANNEL":    "Channel where the application selection panel is posted.",
-            "APPLICATION_REVIEW_CHANNEL":   "Channel where completed applications are posted for staff review.",
+            "APPLICATION_REVIEW_CHANNEL":   "Default channel where completed applications are posted for staff review (fallback when no category-specific channel is configured).",
             "APPLICATION_CATEGORY_SPECIFIC": {
-                "_about":    "Per-role review channels. Completed applications for each role type are posted to the matching channel instead of (or in addition to) the main review channel.",
-                "Builder":   "Review channel for Builder applications.",
-                "Dev": "Review channel for Dev applications.",
-                "Media":     "Review channel for Media applications.",
-                "Beta-Tester": "Review channel for Beta-Tester applications."
+                "_about":       "Per-role application review channel. Applications for each role are posted to the matching channel instead of APPLICATION_REVIEW_CHANNEL.",
+                "Helper":       "Review channel for Helper applications.",
+                "Builder":      "Review channel for Builder applications.",
+                "Developer":          "Review channel for Developer applications.",
+                "Media":        "Review channel for Media applications.",
+                "Beta-Tester":  "Review channel for Beta-Tester applications."
             }
         },
         "ROLES": {
-            "_about":   "Role IDs assigned automatically by the bot.",
+            "_about":    "Role IDs that are automatically assigned by the bot.",
             "JOIN_ROLE": "Role given to every new human member on join.",
             "BOT_ROLE":  "Role given to every new bot added to the server."
         },
         "STAFF_CONFIG": {
-            "_about":          "All staff-rank role IDs and hierarchy rules.",
+            "_about":          "All staff rank role IDs and hierarchy rules.",
             "STAFF_ROLE":      "Role ID shared by all active staff members.",
-            "MANAGEMENT_ROLE": "Role ID for management — required to use /promote, /demote, /massrole.",
-            "RANK_ROLES":      "Map of rank name → role ID. Every promotable rank must be listed here.",
+            "MANAGEMENT_ROLE": "Role ID for management — required for /promote, /demote, /massrole, and application reviews.",
+            "RANK_ROLES":      "Mapping of rank name → role ID. Every promotable rank must be listed here. Key names must match application categories exactly.",
             "ROLE_HIERARCHY":  "When a rank is assigned, all ranks listed in its array are also added.",
-            "STAFF_RANKS":     "Ranks that also receive the shared STAFF_ROLE on promotion."
+            "STAFF_RANKS":     "Ranks that also receive the shared STAFF_ROLE when promoted."
         },
         "CATEGORY_PERMISSIONS": {
-            "_about":      "Defines each ticket category: its display name, which staff roles can see the channel, and the embed accent color (decimal integer — convert hex at e.g. hexcolorcodes.com).",
-            "general":     "General Support tickets — visible to the general support role.",
-            "bug":         "Bug Report tickets.",
-            "player":      "Player Report tickets.",
-            "appeal":      "Punishment Appeal tickets — visible to senior staff.",
-            "payment":     "Payment Support tickets."
+            "_about":      "Defines each ticket category: its display name, which staff roles can see the channel, and the embed accent color (decimal — use a hex converter e.g. hexcolorcodes.com).",
+            "general":     "General support tickets — visible to the general support role.",
+            "bug":         "Bug report tickets.",
+            "player":      "Player report tickets.",
+            "appeal":      "Punishment appeal tickets — visible to senior staff.",
+            "payment":     "Payment support tickets."
         }
     },
 
@@ -73,8 +75,8 @@
         "MESSAGE_LOG_CHANNEL":      "000000000000000000",
         "CHANNEL_LOG_CHANNEL":      "000000000000000000",
         "ROLE_LOG_CHANNEL":         "000000000000000000",
-        "USER_LOG_CHANNEL":       "000000000000000000",
-        "MEMBER_LOG_CHANNEL":         "000000000000000000",
+        "USER_LOG_CHANNEL":         "000000000000000000",
+        "MEMBER_LOG_CHANNEL":       "000000000000000000",
         "WELCOME_CHANNEL":          "000000000000000000",
         "MONITORED_CATEGORY":       "000000000000000000",
         "PROMOTION_LOG_CHANNEL":    "000000000000000000",
@@ -82,8 +84,9 @@
         "APPLICATION_PANEL_CHANNEL":  "000000000000000000",
         "APPLICATION_REVIEW_CHANNEL": "000000000000000000",
         "APPLICATION_CATEGORY_SPECIFIC": {
+            "Helper":      "000000000000000000",
             "Builder":     "000000000000000000",
-            "Dev":   "000000000000000000",
+            "Developer":   "000000000000000000",
             "Media":       "000000000000000000",
             "Beta-Tester": "000000000000000000"
         }
@@ -106,10 +109,10 @@
             "Famous":      "000000000000000000",
             "Partner":     "000000000000000000",
             "Builder":     "000000000000000000",
-            "Helper":     "000000000000000000",
-            "Mod":   "000000000000000000",
-            "SrMod": "000000000000000000",
-            "Dev":   "000000000000000000",
+            "Helper":      "000000000000000000",
+            "Mod":         "000000000000000000",
+            "SrMod":       "000000000000000000",
+            "Developer":         "000000000000000000",
             "Admin":       "000000000000000000",
             "Beta-Tester": "000000000000000000"
         },
@@ -120,12 +123,12 @@
             "Famous":      ["Creator", "Media", "Famous"],
             "Partner":     ["Creator", "Media", "Famous", "Partner"],
             "Builder":     ["Builder"],
-            "Helper":     ["Helper", "Mod", "SrMod", "Admin", "Owner"],
-            "Dev":   ["Dev"],
+            "Helper":      ["Helper"],
+            "Developer":         ["Developer"],
             "Beta-Tester": ["Beta-Tester"]
         },
 
-        "STAFF_RANKS": ["Helper", "Mod", "SrMod", "Admin", "Dev", "Owner"]
+        "STAFF_RANKS": ["Helper", "Mod", "SrMod", "Admin", "Developer", "Owner"]
     },
 
     "CATEGORY_PERMISSIONS": {

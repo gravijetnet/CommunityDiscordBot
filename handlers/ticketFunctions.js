@@ -1,4 +1,4 @@
-const { ChannelType, PermissionsBitField, EmbedBuilder, ButtonBuilder, ButtonStyle, ActionRowBuilder } = require('discord.js');
+const { ChannelType, PermissionsBitField, EmbedBuilder, ButtonBuilder, ButtonStyle, ActionRowBuilder, MessageFlags } = require('discord.js');
 const MSG = require('../config/messages');
 
 async function fetchChannel(bot, channelId) {
@@ -14,22 +14,22 @@ async function createTicket(interaction, category, bot) {
     return new Promise((resolve, reject) => {
         bot.db.get("SELECT * FROM ticket_bans WHERE user_id = ?", [interaction.user.id], async (err, ban) => {
             if (err) {
-                await interaction.reply({ content: MSG.GENERIC_DB_ERROR, ephemeral: true });
+                await interaction.reply({ content: MSG.GENERIC_DB_ERROR, flags: MessageFlags.Ephemeral });
                 return reject(err);
             }
 
             if (ban) {
                 const embed = new EmbedBuilder()
-                    .setTitle("Ticket Creation Blocked")
+                    .setTitle("Ticket Blocked")
                     .setDescription(MSG.TICKET_BANNED)
                     .setColor(0xff0000);
-                await interaction.reply({ embeds: [embed], ephemeral: true });
+                await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
                 return resolve();
             }
 
             bot.db.get("SELECT COUNT(*) as count FROM tickets WHERE user_id = ?", [interaction.user.id], async (err, row) => {
                 if (err) {
-                    await interaction.reply({ content: MSG.GENERIC_DB_ERROR, ephemeral: true });
+                    await interaction.reply({ content: MSG.GENERIC_DB_ERROR, flags: MessageFlags.Ephemeral });
                     return reject(err);
                 }
 
@@ -46,7 +46,7 @@ async function createTicketChannel(interaction, category, ticketCount, bot) {
     const guild = interaction.guild;
 
     if (!categoryChannel) {
-        await interaction.reply({ content: MSG.GENERIC_ERROR, ephemeral: true });
+        await interaction.reply({ content: MSG.GENERIC_ERROR, flags: MessageFlags.Ephemeral });
         return;
     }
 
@@ -102,7 +102,7 @@ async function createTicketChannel(interaction, category, ticketCount, bot) {
         .setDescription(MSG.TICKET_CREATED(channel))
         .setColor(0x00ff00);
 
-    await interaction.reply({ embeds: [confirmEmbed], ephemeral: true });
+    await interaction.reply({ embeds: [confirmEmbed], flags: MessageFlags.Ephemeral });
 }
 
 async function closeTicketChannel(channel, closer, bot) {
@@ -143,10 +143,10 @@ async function closeTicketChannel(channel, closer, bot) {
                                 .setColor(0x0000ff)
                                 .setTimestamp()
                                 .addFields(
-                                    { name: "Topic", value: bot.CONFIG.CATEGORY_PERMISSIONS[ticket.category]?.name || 'Unknown', inline: true },
-                                    { name: "User", value: `<@${ticket.user_id}>`, inline: true },
-                                    { name: "Closed by", value: closer.toString(), inline: true },
-                                    { name: "Ticket ID", value: `#${ticket.id}`, inline: true }
+                                    { name: "Category",    value: bot.CONFIG.CATEGORY_PERMISSIONS[ticket.category]?.name || ticket.category, inline: true },
+                                    { name: "User",        value: `<@${ticket.user_id}>`, inline: true },
+                                    { name: "Closed by",   value: closer.toString(), inline: true },
+                                    { name: "Ticket ID",   value: `#${ticket.id}`, inline: true }
                                 );
 
                             const files = [];
@@ -157,10 +157,7 @@ async function closeTicketChannel(channel, closer, bot) {
                                 });
                             }
 
-                            await transcriptChannel.send({ 
-                                embeds: [embed],
-                                files: files
-                            });
+                            await transcriptChannel.send({ embeds: [embed], files: files });
                         }
                     } catch (error) {
                         console.error('Error sending transcript:', error);
@@ -174,7 +171,7 @@ async function closeTicketChannel(channel, closer, bot) {
                             .setColor(0x0000ff)
                             .setTimestamp()
                             .addFields(
-                                { name: "Topic", value: bot.CONFIG.CATEGORY_PERMISSIONS[ticket.category]?.name || 'Unknown', inline: true },
+                                { name: "Category",  value: bot.CONFIG.CATEGORY_PERMISSIONS[ticket.category]?.name || ticket.category, inline: true },
                                 { name: "Closed by", value: closer.toString(), inline: true }
                             );
 
@@ -186,10 +183,7 @@ async function closeTicketChannel(channel, closer, bot) {
                             });
                         }
 
-                        await user.send({ 
-                            embeds: [dmEmbed],
-                            files: dmFiles
-                        });
+                        await user.send({ embeds: [dmEmbed], files: dmFiles });
                     } catch (error) {
                         console.log(`Could not send transcript to user ${ticket.user_id}`);
                     }
