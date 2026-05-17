@@ -65,20 +65,6 @@ class ApplicationHandler {
                 "Tell us a bit about yourself.",
                 "Do you have any questions for us?"
             ],
-            'Dev': [
-                "What is your Minecraft in-game name?",
-                "How old are you?",
-                "What timezone do you live in?",
-                "Why do you want to become a Developer on our server?",
-                "What do you think about our server?",
-                "How active do you plan to be?",
-                "What motivates you to become a Developer on our server?",
-                "Are you staff on other servers? If so, please provide details.",
-                "What are your goals for the next 2 months on our server?",
-                "Show us some of your work! (No file uploads; please provide links or code snippets.)",
-                "Tell us a bit about yourself.",
-                "Do you have any questions for us?"
-            ],
             'Developer': [
                 "What is your Minecraft in-game name?",
                 "How old are you?",

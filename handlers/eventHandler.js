@@ -2004,7 +2004,23 @@ function registerEventHandlers(bot) {
             console.error('[guildMemberAdd] Role assignment failed:', err);
         }
 
-        
+        if (!member.user.bot) {
+            try {
+                const welcomeChannel = await getLogChannel(bot, bot.CONFIG.WELCOME_CHANNEL);
+                if (welcomeChannel) {
+                    const welcomeEmbed = new EmbedBuilder()
+                        .setTitle('Welcome!')
+                        .setDescription(MSG.WELCOME_BODY(member.user, member.guild.name))
+                        .setColor(0x00ff00)
+                        .setThumbnail(member.user.displayAvatarURL({ dynamic: true }))
+                        .setFooter({ text: MSG.WELCOME_FOOTER(member.guild.memberCount) })
+                        .setTimestamp();
+                    await welcomeChannel.send({ embeds: [welcomeEmbed] });
+                }
+            } catch (err) {
+                console.error('[guildMemberAdd] welcome message failed:', err);
+            }
+        }
 
         try {
             await logMemberJoin(member, bot);

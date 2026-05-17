@@ -308,7 +308,7 @@ module.exports = {
                 { name: 'Moderator',     value: 'Mod' },
                 { name: 'Sr. Moderator', value: 'SrMod' },
                 { name: 'Admin',         value: 'Admin' },
-                { name: 'Developer',     value: 'Dev' },
+                { name: 'Developer',     value: 'Developer' },
                 { name: 'Beta-Tester',   value: 'Beta-Tester' }
             ]
         }
@@ -339,7 +339,7 @@ module.exports = {
                             { name: 'Moderator',     value: 'Mod' },
                             { name: 'Sr. Moderator', value: 'SrMod' },
                             { name: 'Admin',         value: 'Admin' },
-                            { name: 'Developer',     value: 'Dev' },
+                            { name: 'Developer',     value: 'Developer' },
                             { name: 'Beta-Tester',   value: 'Beta-Tester' }
                         ]
                     }
