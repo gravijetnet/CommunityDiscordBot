@@ -353,7 +353,9 @@ module.exports = {
                         name: 'amount',
                         type: ApplicationCommandOptionType.Integer,
                         description: 'Number of messages to clear (use 0 to clear all)',
-                        required: true
+                        required: true,
+                        min_value: 0,
+                        max_value: 100
                     }
                 ]
             },
@@ -684,7 +686,7 @@ async function handleCloseRequest(interaction, channel, bot) {
 async function handleTicketCloseCommand(interaction, channel, bot) {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-    bot.db.get("SELECT category FROM tickets WHERE channel_id = ?", [channel.id], async (err, ticket) => {
+    bot.db.get("SELECT * FROM tickets WHERE channel_id = ?", [channel.id], async (err, ticket) => {
         if (err) {
             await interaction.editReply({ content: MSG.GENERIC_ERROR });
             return;
@@ -692,6 +694,16 @@ async function handleTicketCloseCommand(interaction, channel, bot) {
 
         if (!ticket) {
             await interaction.editReply({ content: MSG.TICKET_NOT_FOUND });
+            return;
+        }
+
+        const categoryConfig = bot.CONFIG.CATEGORY_PERMISSIONS[ticket.category];
+        const isStaff = categoryConfig
+            ? interaction.member.roles.cache.some(r => categoryConfig.staff_roles.includes(r.id))
+            : interaction.member.roles.cache.has(bot.MANAGEMENT_ROLE);
+
+        if (!isStaff) {
+            await interaction.editReply({ content: MSG.NO_PERMISSION_STAFF });
             return;
         }
 
@@ -1765,24 +1777,34 @@ async function handleClearCommand(interaction, options, bot) {
         return;
     }
 
+    // Bulk-deleting up to 100 messages (or looping for amount=0) can easily take
+    // longer than Discord's 3s interaction window, so acknowledge first.
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+    const TWO_WEEKS_MS = 14 * 24 * 60 * 60 * 1000;
+
     try {
         if (amount === 0) {
-            let deleted;
-            do {
+            for (;;) {
                 const messages = await interaction.channel.messages.fetch({ limit: 100 });
-                if (messages.size === 0) break;
-                deleted = await interaction.channel.bulkDelete(messages, true);
-            } while (deleted.size >= 2);
+                const deletable = messages.filter(m => Date.now() - m.createdTimestamp < TWO_WEEKS_MS);
+                if (deletable.size === 0) break;
+                const deleted = await interaction.channel.bulkDelete(deletable, true);
+                if (deleted.size === 0) break;
+            }
         } else {
             const messages = await interaction.channel.messages.fetch({ limit: amount });
-            await interaction.channel.bulkDelete(messages, true);
+            const deletable = messages.filter(m => Date.now() - m.createdTimestamp < TWO_WEEKS_MS);
+            if (deletable.size > 0) {
+                await interaction.channel.bulkDelete(deletable, true);
+            }
         }
 
         const embed = new EmbedBuilder()
             .setTitle("Messages Cleared")
             .setDescription(MSG.CLEAR_SUCCESS)
             .setColor(0x00ff00);
-        await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+        await interaction.editReply({ embeds: [embed] });
 
     } catch (error) {
         console.error('Error clearing messages:', error);
@@ -1790,7 +1812,7 @@ async function handleClearCommand(interaction, options, bot) {
             .setTitle("Error")
             .setDescription(MSG.GENERIC_ERROR)
             .setColor(0xff0000);
-        await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+        await interaction.editReply({ embeds: [embed] }).catch(() => {});
     }
 }
 
@@ -1846,6 +1868,10 @@ async function handleReportCommand(interaction, options, bot) {
             return;
         }
 
+        // Embed field values are capped at 1024 chars by Discord; an over-long
+        // proof would otherwise throw on send and leave the report unanswered.
+        const proofValue = proof.length > 1024 ? proof.slice(0, 1021) + '...' : proof;
+
         const embed = new EmbedBuilder()
             .setTitle("User Report")
             .setColor(0xff0000)
@@ -1853,7 +1879,7 @@ async function handleReportCommand(interaction, options, bot) {
             .addFields(
                 { name: "Reported User", value: `${user} (${user.tag})`, inline: true },
                 { name: "Reported By", value: `${interaction.user} (${interaction.user.tag})`, inline: true },
-                { name: "Proof", value: proof, inline: false }
+                { name: "Proof", value: proofValue, inline: false }
             )
             .setThumbnail(user.displayAvatarURL({ dynamic: true }))
             .setFooter({ text: `User ID: ${user.id}` });
@@ -1876,13 +1902,22 @@ async function handleReportCommand(interaction, options, bot) {
         const row = new ActionRowBuilder()
             .addComponents(cancelButton, muteButton, banButton);
 
-        await reportChannel.send({ embeds: [embed], components: [row] });
+        try {
+            await reportChannel.send({ embeds: [embed], components: [row] });
 
-        const successEmbed = new EmbedBuilder()
-            .setTitle("Report Submitted")
-            .setDescription(`Your report against ${user.tag} has been submitted to the staff team.`)
-            .setColor(0x00ff00);
-        await interaction.reply({ embeds: [successEmbed], flags: MessageFlags.Ephemeral });
+            const successEmbed = new EmbedBuilder()
+                .setTitle("Report Submitted")
+                .setDescription(`Your report against ${user.tag} has been submitted to the staff team.`)
+                .setColor(0x00ff00);
+            await interaction.reply({ embeds: [successEmbed], flags: MessageFlags.Ephemeral });
+        } catch (error) {
+            console.error('Error submitting report:', error);
+            const errEmbed = new EmbedBuilder()
+                .setTitle("Error")
+                .setDescription(MSG.GENERIC_ERROR)
+                .setColor(0xff0000);
+            await interaction.reply({ embeds: [errEmbed], flags: MessageFlags.Ephemeral }).catch(() => {});
+        }
     });
 }
 
@@ -2107,37 +2142,37 @@ async function handleUnlockCommand(interaction, bot) {
     const channel = interaction.channel;
 
     try {
+        // /lock denies SendMessages/AddReactions on @everyone. That's the only
+        // thing that actually locks the channel, and if @everyone had no prior
+        // overwrite it won't be in savedPermissions — so always neutralize it
+        // here regardless of saved state (also makes unlock work after a
+        // restart, when the in-memory map is empty).
+        await channel.permissionOverwrites.edit(interaction.guild.roles.everyone, {
+            SendMessages: null,
+            AddReactions: null
+        });
+
+        // Best-effort restore of any other overwrites captured at lock time.
         const savedPermissions = channelPermissions.get(channel.id);
+        if (savedPermissions) {
+            for (const perm of savedPermissions) {
+                try {
+                    const target = perm.type === 0 ?
+                        interaction.guild.roles.cache.get(perm.id) :
+                        interaction.guild.members.cache.get(perm.id);
 
-        if (!savedPermissions) {
-            const embed = new EmbedBuilder()
-                .setTitle("No Saved Permissions")
-                .setDescription("No previous permissions found for this channel. You may need to set permissions manually.")
-                .setColor(0xff0000);
-            await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
-            return;
-        }
-
-        // Restore saved permissions
-        for (const perm of savedPermissions) {
-            try {
-                const target = perm.type === 0 ? 
-                    interaction.guild.roles.cache.get(perm.id) : 
-                    interaction.guild.members.cache.get(perm.id);
-                
-                if (target) {
-                    await channel.permissionOverwrites.edit(target, {
-                        SendMessages: null,
-                        AddReactions: null
-                    });
+                    if (target) {
+                        await channel.permissionOverwrites.edit(target, {
+                            SendMessages: null,
+                            AddReactions: null
+                        });
+                    }
+                } catch (error) {
+                    console.error(`Error restoring permissions for ${perm.id}:`, error);
                 }
-            } catch (error) {
-                console.error(`Error restoring permissions for ${perm.id}:`, error);
             }
+            channelPermissions.delete(channel.id);
         }
-
-        // Clear saved permissions
-        channelPermissions.delete(channel.id);
 
         const embed = new EmbedBuilder()
             .setTitle("Channel Unlocked")
@@ -2306,7 +2341,9 @@ async function handleEmbedCommand(interaction, options, bot) {
     if (colorInput) {
         const hex = colorInput.replace('#', '');
         const parsed = parseInt(hex, 16);
-        if (!isNaN(parsed)) color = parsed;
+        // Must be a valid 24-bit color; out-of-range makes setColor throw a
+        // RangeError outside the try/catch below.
+        if (!isNaN(parsed) && parsed >= 0 && parsed <= 0xffffff) color = parsed;
     }
 
     const embed = new EmbedBuilder()

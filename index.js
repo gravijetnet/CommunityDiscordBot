@@ -120,15 +120,18 @@ class TicketBot {
     }
 
     cleanupExpiredApplications() {
-        const now = new Date().toISOString();
+        // Application sessions live only in memory, so any row still marked
+        // 'in_progress' after a (re)start is orphaned and unresumable. Leaving
+        // it would lock the user out with "application already open" until it
+        // expires, so abandon every in_progress row on startup — not just the
+        // already-expired ones.
         this.db.run(
-            "UPDATE applications SET status = 'timeout' WHERE status = 'in_progress' AND expires_at < ?",
-            [now],
+            "UPDATE applications SET status = 'timeout' WHERE status = 'in_progress'",
             function(err) {
                 if (err) {
-                    console.error('Error cleaning up expired applications:', err);
+                    console.error('Error cleaning up in-progress applications:', err);
                 } else {
-                    console.log(`Cleaned up ${this.changes} expired applications`);
+                    console.log(`Cleaned up ${this.changes} orphaned in-progress applications`);
                 }
             }
         );

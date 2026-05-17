@@ -209,30 +209,27 @@ async function logMessageDelete(message, bot) {
         ].filter(Boolean);
         const isLogChannel = logChannelIds.includes(message.channel.id);
 
-        // Who deleted the message? (Audit Log)
-        const executor = await fetchAuditExecutor(message.guild, AuditLogEvent.MessageDelete, message.author?.id);
-        
-        // Extract reason from audit log
+        // Who deleted the message, and why? Single audit-log fetch for both.
+        let executor = null;
         let deletionReason = 'No reason provided';
-        if (executor) {
-            try {
-                const auditLogs = await message.guild.fetchAuditLogs({
-                    type: AuditLogEvent.MessageDelete,
-                    limit: 5
-                });
-                
-                const logEntry = auditLogs.entries.find(entry => 
-                    entry.target.id === message.author?.id &&
-                    entry.extra.channel.id === message.channel.id &&
-                    Date.now() - entry.createdTimestamp < 5000
-                );
-                
-                if (logEntry?.reason) {
-                    deletionReason = logEntry.reason;
-                }
-            } catch (auditError) {
-                console.error('Error fetching audit log:', auditError);
+        try {
+            const auditLogs = await message.guild.fetchAuditLogs({
+                type: AuditLogEvent.MessageDelete,
+                limit: 5
+            });
+
+            const logEntry = auditLogs.entries.find(entry =>
+                entry.target?.id === message.author?.id &&
+                entry.extra?.channel?.id === message.channel.id &&
+                Date.now() - entry.createdTimestamp < 5000
+            );
+
+            if (logEntry) {
+                executor = logEntry.executor ?? null;
+                if (logEntry.reason) deletionReason = logEntry.reason;
             }
+        } catch (auditError) {
+            console.error('Error fetching audit log:', auditError);
         }
 
         const deletedByValue = executor
@@ -365,7 +362,7 @@ async function logMessageDelete(message, bot) {
                     const timestamp = Math.floor(Date.now() / 1000);
                     const fileName = `deleted_message_${message.id}_${timestamp}.txt`;
                     
-                    const fileContent = `Deleted Message - ${new Date().toISOString()}\n` +
+                    let fileContent = `Deleted Message - ${new Date().toISOString()}\n` +
                                       `Author: ${message.author?.tag || 'Unknown'} (${message.author?.id || 'N/A'})\n` +
                                       `Channel: #${message.channel.name} (${message.channel.id})\n` +
                                       `Message ID: ${message.id}\n` +
@@ -375,7 +372,7 @@ async function logMessageDelete(message, bot) {
                                       `Reason: ${deletionReason}\n\n` +
                                       `CONTENT:\n${'='.repeat(50)}\n${message.content}\n${'='.repeat(50)}\n\n` +
                                       `ATTACHMENTS (${message.attachments.size}):\n`;
-                    
+
                     if (message.attachments.size > 0) {
                         message.attachments.forEach((attachment, index) => {
                             fileContent += `${index + 1}. ${attachment.name}: ${attachment.url}\n`;
@@ -972,6 +969,10 @@ async function handleReportButton(interaction, bot) {
                 }
                 throw e;
             }
+            bot.db.run(
+                "INSERT INTO punishments (user_id, type, reason, duration, punished_by) VALUES (?, ?, ?, ?, ?)",
+                [reportedUserId, 'ban', `Banned via report by ${interaction.user.tag}`, 'permanent', interaction.user.id]
+            );
             const banEmbed = new EmbedBuilder()
                 .setTitle('User Banned')
                 .setDescription(`${reportedUser.tag} has been banned.`)
@@ -984,8 +985,9 @@ async function handleReportButton(interaction, bot) {
                 await interaction.reply({ content: 'This user is no longer on the server.', flags: MessageFlags.Ephemeral });
                 return;
             }
+            const muteDurationMs = 14 * 24 * 60 * 60 * 1000;
             try {
-                await member.timeout(14 * 24 * 60 * 60 * 1000, `Timed out via report by ${interaction.user.tag}`);
+                await member.timeout(muteDurationMs, `Timed out via report by ${interaction.user.tag}`);
             } catch (e) {
                 if (e.code === 50013) {
                     await interaction.reply({ content: 'I do not have permission to time out this user.', flags: MessageFlags.Ephemeral });
@@ -993,6 +995,11 @@ async function handleReportButton(interaction, bot) {
                 }
                 throw e;
             }
+            bot.db.run(
+                "INSERT INTO punishments (user_id, type, reason, duration, punished_by, expires_at) VALUES (?, ?, ?, ?, ?, ?)",
+                [reportedUserId, 'mute', `Timed out via report by ${interaction.user.tag}`, '14d', interaction.user.id,
+                    new Date(Date.now() + muteDurationMs).toISOString()]
+            );
             const muteEmbed = new EmbedBuilder()
                 .setTitle('User Timed Out')
                 .setDescription(`${reportedUser.tag} has been timed out for 14 days.`)
@@ -1417,6 +1424,7 @@ async function logThreadUpdate(oldThread, newThread, bot) {
 // ── Reaction logs ─────────────────────────────────────────────────────────────
 
 async function logReactionAdd(reaction, user, bot) {
+    if (user?.bot) return;
     if (reaction.partial) {
         try { reaction = await reaction.fetch(); } catch { return; }
     }
@@ -1446,6 +1454,7 @@ async function logReactionAdd(reaction, user, bot) {
 }
 
 async function logReactionRemove(reaction, user, bot) {
+    if (user?.bot) return;
     if (reaction.partial) {
         try { reaction = await reaction.fetch(); } catch { return; }
     }
@@ -1479,6 +1488,20 @@ async function logReactionRemove(reaction, user, bot) {
 async function logMessageCreate(message, bot) {
     // Never log the bot's own messages — would create an infinite logging loop
     if (message.author.id === bot.client.user.id) return;
+
+    // Don't log activity inside the log channels themselves — that's just the
+    // bot's own audit output and (on a busy server) needless rate-limit load.
+    const logChannelIds = [
+        bot.CONFIG.LOG_CHANNEL,
+        bot.CONFIG.MESSAGE_LOG_CHANNEL,
+        bot.CONFIG.CHANNEL_LOG_CHANNEL,
+        bot.CONFIG.ROLE_LOG_CHANNEL,
+        bot.CONFIG.MEMBER_LOG_CHANNEL,
+        bot.CONFIG.USER_LOG_CHANNEL,
+        bot.CONFIG.PROMOTION_LOG_CHANNEL,
+        bot.CONFIG.TRANSCRIPT_CHANNEL,
+    ].filter(Boolean);
+    if (logChannelIds.includes(message.channel.id)) return;
 
     const embed = new EmbedBuilder()
         .setTitle('Message Sent')

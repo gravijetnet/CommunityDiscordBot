@@ -10,12 +10,33 @@ async function fetchChannel(bot, channelId) {
     }
 }
 
+// Reply correctly whether or not the interaction was already deferred/replied.
+// createTicket defers up front (channel creation can blow past the 3s window),
+// so everything downstream must use editReply/followUp instead of reply.
+async function safeReply(interaction, payload) {
+    try {
+        if (interaction.deferred && !interaction.replied) {
+            return await interaction.editReply(payload);
+        }
+        if (interaction.replied) {
+            return await interaction.followUp(payload);
+        }
+        return await interaction.reply(payload);
+    } catch (e) {
+        if (e?.code !== 10062) console.error('[ticket safeReply] failed:', e?.message || e);
+    }
+}
+
 async function createTicket(interaction, category, bot) {
-    return new Promise((resolve, reject) => {
+    // Creating a channel + sending the opening message can exceed Discord's 3s
+    // interaction window — acknowledge immediately so reply() can't 10062.
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
+
+    return new Promise((resolve) => {
         bot.db.get("SELECT * FROM ticket_bans WHERE user_id = ?", [interaction.user.id], async (err, ban) => {
             if (err) {
-                await interaction.reply({ content: MSG.GENERIC_DB_ERROR, flags: MessageFlags.Ephemeral });
-                return reject(err);
+                await safeReply(interaction, { content: MSG.GENERIC_DB_ERROR, flags: MessageFlags.Ephemeral });
+                return resolve();
             }
 
             if (ban) {
@@ -23,18 +44,23 @@ async function createTicket(interaction, category, bot) {
                     .setTitle("Ticket Blocked")
                     .setDescription(MSG.TICKET_BANNED)
                     .setColor(0xff0000);
-                await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+                await safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
                 return resolve();
             }
 
             bot.db.get("SELECT COUNT(*) as count FROM tickets WHERE user_id = ?", [interaction.user.id], async (err, row) => {
                 if (err) {
-                    await interaction.reply({ content: MSG.GENERIC_DB_ERROR, flags: MessageFlags.Ephemeral });
-                    return reject(err);
+                    await safeReply(interaction, { content: MSG.GENERIC_DB_ERROR, flags: MessageFlags.Ephemeral });
+                    return resolve();
                 }
 
-                const ticketCount = row.count + 1;
-                await createTicketChannel(interaction, category, ticketCount, bot);
+                const ticketCount = (row?.count ?? 0) + 1;
+                try {
+                    await createTicketChannel(interaction, category, ticketCount, bot);
+                } catch (e) {
+                    console.error('Error creating ticket channel:', e);
+                    await safeReply(interaction, { content: MSG.GENERIC_ERROR, flags: MessageFlags.Ephemeral });
+                }
                 resolve();
             });
         });
@@ -46,11 +72,14 @@ async function createTicketChannel(interaction, category, ticketCount, bot) {
     const guild = interaction.guild;
 
     if (!categoryChannel) {
-        await interaction.reply({ content: MSG.GENERIC_ERROR, flags: MessageFlags.Ephemeral });
+        await safeReply(interaction, { content: MSG.GENERIC_ERROR, flags: MessageFlags.Ephemeral });
         return;
     }
 
-    const channelName = `${category}-${interaction.user.username}-${ticketCount.toString().padStart(4, '0')}`;
+    // Discord rejects channel names with characters outside [a-z0-9-]; sanitize
+    // the username so unusual names don't make channels.create() fail.
+    const safeUser = interaction.user.username.toLowerCase().replace(/[^a-z0-9-]/g, '') || 'user';
+    const channelName = `${category}-${safeUser}-${ticketCount.toString().padStart(4, '0')}`.substring(0, 100);
     const catConfig = bot.CONFIG.CATEGORY_PERMISSIONS[category];
 
     const permissionOverwrites = [
@@ -102,7 +131,7 @@ async function createTicketChannel(interaction, category, ticketCount, bot) {
         .setDescription(MSG.TICKET_CREATED(channel))
         .setColor(0x00ff00);
 
-    await interaction.reply({ embeds: [confirmEmbed], flags: MessageFlags.Ephemeral });
+    await safeReply(interaction, { embeds: [confirmEmbed], flags: MessageFlags.Ephemeral });
 }
 
 async function closeTicketChannel(channel, closer, bot) {

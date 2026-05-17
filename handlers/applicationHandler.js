@@ -10,6 +10,23 @@ async function fetchChannel(bot, channelId) {
     }
 }
 
+// Reply correctly regardless of whether the interaction was already deferred or
+// replied to. Slow application actions defer first (the 3s ack window), so the
+// final user-facing message must go through editReply/followUp, not reply.
+async function safeReply(interaction, payload) {
+    try {
+        if (interaction.deferred && !interaction.replied) {
+            return await interaction.editReply(payload);
+        }
+        if (interaction.replied) {
+            return await interaction.followUp(payload);
+        }
+        return await interaction.reply(payload);
+    } catch (e) {
+        if (e?.code !== 10062) console.error('[safeReply] failed:', e?.message || e);
+    }
+}
+
 class ApplicationHandler {
     constructor(bot) {
         this.bot = bot;
@@ -260,20 +277,23 @@ class ApplicationHandler {
         const timeoutHours = this.bot.CONFIG.APPLICATION_TIMEOUT_HOURS ?? 3;
         const expiresAt = new Date(startedAt.getTime() + timeoutHours * 60 * 60 * 1000);
 
+        const self = this;
         this.bot.db.run(
             "INSERT INTO applications (user_id, username, category, answers, status, started_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
             [userId, interaction.user.tag, category, JSON.stringify([]), 'in_progress', startedAt.toISOString(), expiresAt.toISOString()],
-            async (err) => {
+            // Non-arrow so `this` is the sqlite statement; `this.lastID` is the
+            // row id of THIS insert. A separate "SELECT last_insert_rowid()" is
+            // connection-global and races with any concurrent INSERT.
+            function (err) {
                 if (err) {
                     console.error('Error creating application:', err);
                     return;
                 }
 
-                this.bot.db.get("SELECT last_insert_rowid() as id", async (err, row) => {
-                    if (err) return;
+                const applicationId = this.lastID;
 
-                    const applicationId = row.id;
-                    this.sessions.set(userId, {
+                (async () => {
+                    self.sessions.set(userId, {
                         applicationId: applicationId,
                         category: category,
                         currentQuestion: 0,
@@ -285,7 +305,7 @@ class ApplicationHandler {
 
                     const embed = new EmbedBuilder()
                         .setTitle(MSG.APPLICATION_IN_PROGRESS_TITLE)
-                        .setDescription(MSG.APPLICATION_IN_PROGRESS_BODY(this.bot.CONFIG.APPLICATION_TIMEOUT_HOURS ?? 3))
+                        .setDescription(MSG.APPLICATION_IN_PROGRESS_BODY(self.bot.CONFIG.APPLICATION_TIMEOUT_HOURS ?? 3))
                         .setColor(0x00ff00);
 
                     try {
@@ -295,8 +315,8 @@ class ApplicationHandler {
                         await interaction.user.send({ embeds: [embed] });
                     }
 
-                    await this.askQuestion(interaction.user, applicationId, 0);
-                });
+                    await self.askQuestion(interaction.user, applicationId, 0);
+                })();
             }
         );
     }
@@ -356,6 +376,13 @@ class ApplicationHandler {
             await this.timeoutApplication(message.author);
             return;
         }
+
+        // Once every question is answered the summary (with Submit/Edit/Cancel
+        // buttons) is shown but the session stays 'in_progress' until the user
+        // submits. Without this guard, any further DM appends a junk answer and
+        // re-renders a corrupted summary (question text becomes undefined).
+        const questions = this.questions[session.category];
+        if (!questions || session.answers.length >= questions.length) return;
 
         session.answers.push(message.content);
 
@@ -747,12 +774,20 @@ class ApplicationHandler {
             return;
         }
 
+        // accept/deny/ticket do slow work (member fetch, role add, DM, channel
+        // create) before responding, which blows past Discord's 3s window and
+        // throws 10062. Acknowledge first. The *_reason actions must NOT defer —
+        // they open a modal, which has to be the initial interaction response.
+        if (action === 'accept' || action === 'deny' || action === 'ticket') {
+            await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+        }
+
         this.bot.db.get(
             "SELECT * FROM applications WHERE id = ?",
             [applicationId],
             async (err, application) => {
                 if (err || !application) {
-                    await interaction.reply({
+                    await safeReply(interaction, {
                         content: MSG.APPLICATION_NOT_FOUND,
                         flags: MessageFlags.Ephemeral
                     });
@@ -775,12 +810,10 @@ class ApplicationHandler {
                     }
                 } catch (error) {
                     console.error('Error handling manager action:', error);
-                    if (!interaction.replied && !interaction.deferred) {
-                        await interaction.reply({
-                            content: MSG.GENERIC_ERROR,
-                            flags: MessageFlags.Ephemeral
-                        });
-                    }
+                    await safeReply(interaction, {
+                        content: MSG.GENERIC_ERROR,
+                        flags: MessageFlags.Ephemeral
+                    });
                 }
             }
         );
@@ -836,18 +869,16 @@ class ApplicationHandler {
 
             await this.updateApplicationEmbed(interaction, application, 'accepted');
 
-            await interaction.reply({
+            await safeReply(interaction, {
                 content: MSG.APPLICATION_ACCEPT_STAFF_CONFIRM(user.tag),
                 flags: MessageFlags.Ephemeral
             });
         } catch (error) {
             console.error('Error accepting application:', error);
-            if (!interaction.replied && !interaction.deferred) {
-                await interaction.reply({
-                    content: MSG.GENERIC_ERROR,
-                    flags: MessageFlags.Ephemeral
-                });
-            }
+            await safeReply(interaction, {
+                content: MSG.GENERIC_ERROR,
+                flags: MessageFlags.Ephemeral
+            });
         }
     }
 
@@ -873,18 +904,16 @@ class ApplicationHandler {
 
             await this.updateApplicationEmbed(interaction, application, 'denied');
 
-            await interaction.reply({
+            await safeReply(interaction, {
                 content: MSG.APPLICATION_DENY_STAFF_CONFIRM(user.tag),
                 flags: MessageFlags.Ephemeral
             });
         } catch (error) {
             console.error('Error denying application:', error);
-            if (!interaction.replied && !interaction.deferred) {
-                await interaction.reply({
-                    content: MSG.GENERIC_ERROR,
-                    flags: MessageFlags.Ephemeral
-                });
-            }
+            await safeReply(interaction, {
+                content: MSG.GENERIC_ERROR,
+                flags: MessageFlags.Ephemeral
+            });
         }
     }
 
@@ -926,12 +955,15 @@ class ApplicationHandler {
 
         const reason = interaction.fields.getTextInputValue('reason');
 
+        // Role add + DM + log writes follow; acknowledge within the 3s window.
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
         this.bot.db.get(
             "SELECT * FROM applications WHERE id = ?",
             [applicationId],
             async (err, application) => {
                 if (err || !application) {
-                    await interaction.reply({
+                    await safeReply(interaction, {
                         content: MSG.APPLICATION_NOT_FOUND,
                         flags: MessageFlags.Ephemeral
                     });
@@ -948,12 +980,10 @@ class ApplicationHandler {
                     }
                 } catch (error) {
                     console.error('Error handling reason modal:', error);
-                    if (!interaction.replied && !interaction.deferred) {
-                        await interaction.reply({
-                            content: MSG.GENERIC_ERROR,
-                            flags: MessageFlags.Ephemeral
-                        });
-                    }
+                    await safeReply(interaction, {
+                        content: MSG.GENERIC_ERROR,
+                        flags: MessageFlags.Ephemeral
+                    });
                 }
             }
         );
@@ -1009,18 +1039,16 @@ class ApplicationHandler {
 
             await this.updateApplicationEmbed(interaction, application, 'accepted', reason);
 
-            await interaction.reply({
+            await safeReply(interaction, {
                 content: MSG.APPLICATION_ACCEPT_STAFF_CONFIRM(user.tag),
                 flags: MessageFlags.Ephemeral
             });
         } catch (error) {
             console.error('Error accepting application with reason:', error);
-            if (!interaction.replied && !interaction.deferred) {
-                await interaction.reply({
-                    content: MSG.GENERIC_ERROR,
-                    flags: MessageFlags.Ephemeral
-                });
-            }
+            await safeReply(interaction, {
+                content: MSG.GENERIC_ERROR,
+                flags: MessageFlags.Ephemeral
+            });
         }
     }
 
@@ -1046,18 +1074,16 @@ class ApplicationHandler {
 
             await this.updateApplicationEmbed(interaction, application, 'denied', reason);
 
-            await interaction.reply({
+            await safeReply(interaction, {
                 content: MSG.APPLICATION_DENY_STAFF_CONFIRM(user.tag),
                 flags: MessageFlags.Ephemeral
             });
         } catch (error) {
             console.error('Error denying application with reason:', error);
-            if (!interaction.replied && !interaction.deferred) {
-                await interaction.reply({
-                    content: MSG.GENERIC_ERROR,
-                    flags: MessageFlags.Ephemeral
-                });
-            }
+            await safeReply(interaction, {
+                content: MSG.GENERIC_ERROR,
+                flags: MessageFlags.Ephemeral
+            });
         }
     }
 
@@ -1066,11 +1092,12 @@ class ApplicationHandler {
         const guild = interaction.guild;
 
         if (!categoryChannel) {
-            await interaction.reply({ content: MSG.GENERIC_ERROR, flags: MessageFlags.Ephemeral });
+            await safeReply(interaction, { content: MSG.GENERIC_ERROR, flags: MessageFlags.Ephemeral });
             return;
         }
 
-        const channelName = `application-${application.category}-${user.username}`.toLowerCase().replace(/[^a-z0-9-]/g, '').substring(0, 100);
+        const safeUsername = user.username.toLowerCase().replace(/[^a-z0-9-]/g, '') || 'user';
+        const channelName = `application-${application.category.toLowerCase()}-${safeUsername}`.replace(/[^a-z0-9-]/g, '').substring(0, 100);
 
         const permissionOverwrites = [
             {
@@ -1118,13 +1145,13 @@ class ApplicationHandler {
                 [user.id, channel.id, 'application']
             );
 
-            await interaction.reply({
+            await safeReply(interaction, {
                 content: `Ticket created: ${channel}`,
                 flags: MessageFlags.Ephemeral
             });
         } catch (error) {
             console.error('Error opening application ticket:', error);
-            await interaction.reply({
+            await safeReply(interaction, {
                 content: MSG.GENERIC_ERROR,
                 flags: MessageFlags.Ephemeral
             });
