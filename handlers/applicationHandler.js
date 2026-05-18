@@ -127,9 +127,10 @@ class ApplicationHandler {
 
         const row = new ActionRowBuilder().addComponents(selectMenu);
 
+        let existingPanel = null;
         try {
             const messages = await channel.messages.fetch({ limit: 10 });
-            const existingPanel = messages.find(msg =>
+            existingPanel = messages.find(msg =>
                 msg.author.id === this.bot.client.user.id &&
                 msg.embeds.length > 0 &&
                 msg.embeds[0].title === MSG.APPLICATION_PANEL_TITLE
@@ -144,6 +145,7 @@ class ApplicationHandler {
             await channel.bulkDelete(messages);
         } catch (error) {
             console.error('Error clearing channel:', error);
+            if (existingPanel) return; // edit failed — don't create a duplicate
         }
 
         await channel.send({ embeds: [embed], components: [row] });

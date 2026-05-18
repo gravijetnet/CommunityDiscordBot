@@ -38,9 +38,10 @@ async function setupTicketChannel(bot) {
 
     const row = new ActionRowBuilder().addComponents(selectMenu);
 
+    let existingPanel = null;
     try {
         const messages = await channel.messages.fetch({ limit: 10 });
-        const existingPanel = messages.find(msg =>
+        existingPanel = messages.find(msg =>
             msg.author.id === bot.client.user.id &&
             msg.embeds.length > 0 &&
             msg.embeds[0].title === MSG.TICKET_PANEL_TITLE
@@ -55,6 +56,7 @@ async function setupTicketChannel(bot) {
         await channel.bulkDelete(messages);
     } catch (error) {
         console.error('Error clearing channel:', error);
+        if (existingPanel) return; // edit failed — don't create a duplicate
     }
 
     await channel.send({ embeds: [embed], components: [row] });
@@ -356,8 +358,9 @@ async function logMessageDelete(message, bot) {
                                       `ATTACHMENTS (${message.attachments.size}):\n`;
 
                     if (message.attachments.size > 0) {
-                        message.attachments.forEach((attachment, index) => {
-                            fileContent += `${index + 1}. ${attachment.name}: ${attachment.url}\n`;
+                        let attachIdx = 1;
+                        message.attachments.forEach((attachment) => {
+                            fileContent += `${attachIdx++}. ${attachment.name}: ${attachment.url}\n`;
                         });
                     }
                     
@@ -400,7 +403,7 @@ async function logMessageDelete(message, bot) {
                 if (message.content) {
                     dmEmbed.addFields({
                         name: `Content (${message.content.length} chars)`,
-                        value: message.content.length > 2000 ? message.content.substring(0, 1996) + '…' : message.content,
+                        value: message.content.length > 1024 ? message.content.substring(0, 1020) + '…' : message.content,
                         inline: false
                     });
                 }

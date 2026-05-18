@@ -176,7 +176,7 @@ async function closeTicketChannel(channel, closer, bot) {
                             const attachments = message.attachments.size > 0
                                 ? ` [${message.attachments.size} attachment(s)]`
                                 : '';
-                            lines.push(`${message.author.username} (${message.author.id}) - ${message.createdAt}: ${message.content}${attachments}`);
+                            lines.push(`${message.author?.username ?? 'Unknown'} (${message.author?.id ?? 'N/A'}) - ${message.createdAt}: ${message.content}${attachments}`);
                         });
                         transcript = lines.join('\n');
                     } catch (error) {

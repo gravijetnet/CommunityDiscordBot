@@ -2095,6 +2095,11 @@ async function handleProofCommand(interaction, options, bot) {
             return;
         }
 
+        if (embed.fields?.some(f => f.name === 'Proof')) {
+            await interaction.reply({ content: "This log entry already has a proof URL.", flags: MessageFlags.Ephemeral });
+            return;
+        }
+
         const safeProofUrl = proofUrl.length > 1024 ? proofUrl.slice(0, 1021) + '...' : proofUrl;
         const newEmbed = EmbedBuilder.from(embed)
             .addFields({ name: "Proof", value: safeProofUrl, inline: true });
