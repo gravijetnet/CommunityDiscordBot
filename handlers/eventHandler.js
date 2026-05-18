@@ -20,43 +20,6 @@ async function setupTicketChannel(bot) {
         return;
     }
 
-    try {
-        const messages = await channel.messages.fetch({ limit: 10 });
-        const existingPanel = messages.find(msg => 
-            msg.author.id === bot.client.user.id && 
-            msg.embeds.length > 0 && 
-            msg.embeds[0].title === MSG.TICKET_PANEL_TITLE
-        );
-
-        const embed = new EmbedBuilder()
-            .setTitle(MSG.TICKET_PANEL_TITLE)
-            .setDescription(MSG.TICKET_PANEL_DESCRIPTION)
-            .setColor(0x0000ff);
-
-        const selectMenu = new StringSelectMenuBuilder()
-            .setCustomId('ticket_select')
-            .setPlaceholder(MSG.TICKET_PANEL_PLACEHOLDER)
-            .addOptions([
-                { label: "General Support",   value: "general" },
-                { label: "Bug Report",        value: "bug" },
-                { label: "Player Report",     value: "player" },
-                { label: "Punishment Appeal", value: "appeal" },
-                { label: "Payment Support",   value: "payment" }
-            ]);
-
-        const row = new ActionRowBuilder().addComponents(selectMenu);
-
-        if (existingPanel) {
-            await existingPanel.edit({ embeds: [embed], components: [row] });
-            console.log('Ticket panel updated');
-            return;
-        }
-
-        await channel.bulkDelete(messages);
-    } catch (error) {
-        console.error('Error clearing channel:', error);
-    }
-
     const embed = new EmbedBuilder()
         .setTitle(MSG.TICKET_PANEL_TITLE)
         .setDescription(MSG.TICKET_PANEL_DESCRIPTION)
@@ -74,6 +37,25 @@ async function setupTicketChannel(bot) {
         ]);
 
     const row = new ActionRowBuilder().addComponents(selectMenu);
+
+    try {
+        const messages = await channel.messages.fetch({ limit: 10 });
+        const existingPanel = messages.find(msg =>
+            msg.author.id === bot.client.user.id &&
+            msg.embeds.length > 0 &&
+            msg.embeds[0].title === MSG.TICKET_PANEL_TITLE
+        );
+
+        if (existingPanel) {
+            await existingPanel.edit({ embeds: [embed], components: [row] });
+            console.log('Ticket panel updated');
+            return;
+        }
+
+        await channel.bulkDelete(messages);
+    } catch (error) {
+        console.error('Error clearing channel:', error);
+    }
 
     await channel.send({ embeds: [embed], components: [row] });
     console.log('Ticket panel created successfully');
@@ -194,8 +176,8 @@ async function logMessageDelete(message, bot) {
             }
         }
 
-        // Skip if no author (e.g., system message)
-        if (!message.author) return;
+        // Skip if no author (e.g., system message) or a bot message
+        if (!message.author || message.author.bot) return;
 
         const isMonitored = message.channel.parentId === bot.CONFIG.MONITORED_CATEGORY;
         const logChannelIds = [
@@ -257,17 +239,17 @@ async function logMessageDelete(message, bot) {
 
         // Add message content
         if (message.content) {
-            // Ensure content is safe for Discord embeds
-            let displayContent = message.content;
-            
-            // Truncate if too long
-            if (displayContent.length > 1000) {
-                displayContent = displayContent.substring(0, 1000) + '...';
+            // Inside a ``` code fence Discord renders everything literally, so
+            // backslash-escaping backticks/asterisks/underscores is wrong — it
+            // shows the backslashes verbatim. We only need to neutralise a run
+            // of three+ backticks that would otherwise close the fence early;
+            // a zero-width space inserted after the second backtick is invisible
+            // but breaks the triple-backtick token.
+            let displayContent = message.content.replace(/`{3}/g, '`​``');
+            if (displayContent.length > 1010) {
+                displayContent = displayContent.substring(0, 1007) + '...';
             }
-            
-            // Escape special characters
-            displayContent = displayContent.replace(/`/g, '\\`').replace(/\*/g, '\\*').replace(/_/g, '\\_');
-            
+
             embed.addFields({
                 name: `Content (${message.content.length} characters)`,
                 value: `\`\`\`\n${displayContent}\n\`\`\``,
@@ -298,7 +280,7 @@ async function logMessageDelete(message, bot) {
             
             embed.addFields({
                 name: `Attachments (${message.attachments.size})`,
-                value: attachmentList || '*No information available*',
+                value: (attachmentList || '*No information available*').substring(0, 1024),
                 inline: false
             });
             
@@ -473,6 +455,7 @@ async function logMessageUpdate(oldMessage, newMessage, bot) {
             }
         }
         if (!oldMessage.author || !newMessage.author) return;
+        if (oldMessage.author.bot || newMessage.author.bot) return;
         if (oldMessage.content === newMessage.content) return;
 
         const embed = new EmbedBuilder()
@@ -491,12 +474,10 @@ async function logMessageUpdate(oldMessage, newMessage, bot) {
             .setFooter({ text: `Message ID: ${newMessage.id} | Channel ID: ${newMessage.channel.id}` });
 
         if (oldMessage.content) {
-            let oldContent = oldMessage.content;
+            let oldContent = oldMessage.content.replace(/`{3}/g, '`​``');
             if (oldContent.length > 500) {
-                oldContent = oldContent.substring(0, 500) + '...';
+                oldContent = oldContent.substring(0, 497) + '...';
             }
-            oldContent = oldContent.replace(/`/g, '\\`').replace(/\*/g, '\\*').replace(/_/g, '\\_');
-            
             embed.addFields({
                 name: `Before (${oldMessage.content.length} chars)`,
                 value: `\`\`\`\n${oldContent}\n\`\`\``,
@@ -511,12 +492,10 @@ async function logMessageUpdate(oldMessage, newMessage, bot) {
         }
 
         if (newMessage.content) {
-            let newContent = newMessage.content;
+            let newContent = newMessage.content.replace(/`{3}/g, '`​``');
             if (newContent.length > 500) {
-                newContent = newContent.substring(0, 500) + '...';
+                newContent = newContent.substring(0, 497) + '...';
             }
-            newContent = newContent.replace(/`/g, '\\`').replace(/\*/g, '\\*').replace(/_/g, '\\_');
-            
             embed.addFields({
                 name: `After (${newMessage.content.length} chars)`,
                 value: `\`\`\`\n${newContent}\n\`\`\``,
@@ -952,37 +931,41 @@ async function handleReportButton(interaction, bot) {
             return;
         }
 
+        // Ban and mute involve slow Discord API calls; acknowledge within the 3s window.
+        await interaction.deferUpdate();
+
         const guild = interaction.guild;
         const member = await guild.members.fetch(reportedUserId).catch(() => null);
 
         if (action === 'ban') {
             if (!member) {
-                await interaction.reply({ content: 'This user is no longer on the server.', flags: MessageFlags.Ephemeral });
+                await interaction.followUp({ content: 'This user is no longer on the server.', flags: MessageFlags.Ephemeral });
                 return;
             }
             try {
                 await guild.bans.create(reportedUserId, { reason: `Banned via report by ${interaction.user.tag}`, deleteMessageSeconds: 0 });
             } catch (e) {
                 if (e.code === 50013) {
-                    await interaction.reply({ content: 'I do not have permission to ban this user.', flags: MessageFlags.Ephemeral });
+                    await interaction.followUp({ content: 'I do not have permission to ban this user.', flags: MessageFlags.Ephemeral });
                     return;
                 }
                 throw e;
             }
             bot.db.run(
                 "INSERT INTO punishments (user_id, type, reason, duration, punished_by) VALUES (?, ?, ?, ?, ?)",
-                [reportedUserId, 'ban', `Banned via report by ${interaction.user.tag}`, 'permanent', interaction.user.id]
+                [reportedUserId, 'ban', `Banned via report by ${interaction.user.tag}`, 'permanent', interaction.user.id],
+                (err) => { if (err) console.error('[handleReportButton] ban DB error:', err); }
             );
             const banEmbed = new EmbedBuilder()
                 .setTitle('User Banned')
                 .setDescription(`${reportedUser.tag} has been banned.`)
                 .setColor(0xff0000)
                 .setTimestamp();
-            await interaction.update({ embeds: [banEmbed], components: [] });
+            await interaction.editReply({ embeds: [banEmbed], components: [] });
 
         } else if (action === 'mute') {
             if (!member) {
-                await interaction.reply({ content: 'This user is no longer on the server.', flags: MessageFlags.Ephemeral });
+                await interaction.followUp({ content: 'This user is no longer on the server.', flags: MessageFlags.Ephemeral });
                 return;
             }
             const muteDurationMs = 14 * 24 * 60 * 60 * 1000;
@@ -990,7 +973,7 @@ async function handleReportButton(interaction, bot) {
                 await member.timeout(muteDurationMs, `Timed out via report by ${interaction.user.tag}`);
             } catch (e) {
                 if (e.code === 50013) {
-                    await interaction.reply({ content: 'I do not have permission to time out this user.', flags: MessageFlags.Ephemeral });
+                    await interaction.followUp({ content: 'I do not have permission to time out this user.', flags: MessageFlags.Ephemeral });
                     return;
                 }
                 throw e;
@@ -998,19 +981,24 @@ async function handleReportButton(interaction, bot) {
             bot.db.run(
                 "INSERT INTO punishments (user_id, type, reason, duration, punished_by, expires_at) VALUES (?, ?, ?, ?, ?, ?)",
                 [reportedUserId, 'mute', `Timed out via report by ${interaction.user.tag}`, '14d', interaction.user.id,
-                    new Date(Date.now() + muteDurationMs).toISOString()]
+                    new Date(Date.now() + muteDurationMs).toISOString()],
+                (err) => { if (err) console.error('[handleReportButton] mute DB error:', err); }
             );
             const muteEmbed = new EmbedBuilder()
                 .setTitle('User Timed Out')
                 .setDescription(`${reportedUser.tag} has been timed out for 14 days.`)
                 .setColor(0x808080)
                 .setTimestamp();
-            await interaction.update({ embeds: [muteEmbed], components: [] });
+            await interaction.editReply({ embeds: [muteEmbed], components: [] });
         }
     } catch (err) {
         console.error('[handleReportButton] error:', err);
         try {
-            await interaction.reply({ content: MSG.GENERIC_ERROR, flags: MessageFlags.Ephemeral });
+            if (interaction.deferred || interaction.replied) {
+                await interaction.followUp({ content: MSG.GENERIC_ERROR, flags: MessageFlags.Ephemeral });
+            } else {
+                await interaction.reply({ content: MSG.GENERIC_ERROR, flags: MessageFlags.Ephemeral });
+            }
         } catch { /* already replied */ }
     }
 }
@@ -1035,9 +1023,9 @@ async function logGuildUpdate(oldGuild, newGuild, bot) {
     if (oldGuild.explicitContentFilter !== newGuild.explicitContentFilter)
         changes.push(`**Explicit Content Filter:** ${oldGuild.explicitContentFilter} → ${newGuild.explicitContentFilter}`);
     if (oldGuild.afkChannelId !== newGuild.afkChannelId)
-        changes.push(`**AFK Channel:** <#${oldGuild.afkChannelId ?? 0}> → <#${newGuild.afkChannelId ?? 0}>`);
+        changes.push(`**AFK Channel:** ${oldGuild.afkChannelId ? `<#${oldGuild.afkChannelId}>` : 'None'} → ${newGuild.afkChannelId ? `<#${newGuild.afkChannelId}>` : 'None'}`);
     if (oldGuild.systemChannelId !== newGuild.systemChannelId)
-        changes.push(`**System Channel:** <#${oldGuild.systemChannelId ?? 0}> → <#${newGuild.systemChannelId ?? 0}>`);
+        changes.push(`**System Channel:** ${oldGuild.systemChannelId ? `<#${oldGuild.systemChannelId}>` : 'None'} → ${newGuild.systemChannelId ? `<#${newGuild.systemChannelId}>` : 'None'}`);
     if (oldGuild.premiumTier !== newGuild.premiumTier)
         changes.push(`**Boost Level:** ${oldGuild.premiumTier} → ${newGuild.premiumTier}`);
     if (oldGuild.vanityURLCode !== newGuild.vanityURLCode)
@@ -1429,7 +1417,7 @@ async function logReactionAdd(reaction, user, bot) {
         try { reaction = await reaction.fetch(); } catch { return; }
     }
     if (reaction.message.partial) {
-        try { await reaction.message.fetch(); } catch { return; }
+        try { reaction.message = await reaction.message.fetch(); } catch { return; }
     }
     if (!reaction.message.guild || reaction.message.guild.id !== bot.CONFIG.GUILD_ID) return;
 
@@ -1459,7 +1447,7 @@ async function logReactionRemove(reaction, user, bot) {
         try { reaction = await reaction.fetch(); } catch { return; }
     }
     if (reaction.message.partial) {
-        try { await reaction.message.fetch(); } catch { return; }
+        try { reaction.message = await reaction.message.fetch(); } catch { return; }
     }
     if (!reaction.message.guild || reaction.message.guild.id !== bot.CONFIG.GUILD_ID) return;
 
@@ -2040,9 +2028,12 @@ function registerEventHandlers(bot) {
 
         // Check if it was a kick (not a ban or leave)
         try {
-            const auditLogs = await member.guild.fetchAuditLogs({ type: 20, limit: 1 });
-            const kickLog = auditLogs.entries.first();
-            if (kickLog && kickLog.target.id === member.id) {
+            const auditLogs = await member.guild.fetchAuditLogs({ type: AuditLogEvent.MemberKick, limit: 5 });
+            const kickLog = auditLogs.entries.find(e =>
+                e.target?.id === member.id &&
+                Date.now() - e.createdTimestamp < 5000
+            );
+            if (kickLog) {
                 if (kickLog.executor?.id === bot.client.user.id) return;
                 await logManualModeration({
                     guild: member.guild,
@@ -2061,10 +2052,10 @@ function registerEventHandlers(bot) {
         if (!oldMember.isCommunicationDisabled() && newMember.isCommunicationDisabled()) {
             try {
                 const auditLogs = await newMember.guild.fetchAuditLogs({
-                    type: 24, // MEMBER_UPDATE
+                    type: AuditLogEvent.MemberUpdate,
                     limit: 1
                 });
-                
+
                 const muteLog = auditLogs.entries.first();
                 if (muteLog && muteLog.target.id === newMember.id && muteLog.executor?.id !== bot.client.user.id) {
                     await logManualModeration({
@@ -2083,7 +2074,7 @@ function registerEventHandlers(bot) {
         if (oldMember.isCommunicationDisabled() && !newMember.isCommunicationDisabled()) {
             try {
                 const auditLogs = await newMember.guild.fetchAuditLogs({
-                    type: 24, // MEMBER_UPDATE
+                    type: AuditLogEvent.MemberUpdate,
                     limit: 1
                 });
 
@@ -2118,14 +2109,17 @@ function registerEventHandlers(bot) {
 
     bot.client.on('guildBanAdd', async (ban) => {
         try {
-            const auditLogs = await ban.guild.fetchAuditLogs({ type: 22, limit: 1 }); // MemberBanAdd
-            const entry = auditLogs.entries.first();
-            if (entry?.executor?.id === bot.client.user.id) return;
+            const auditLogs = await ban.guild.fetchAuditLogs({ type: AuditLogEvent.MemberBanAdd, limit: 5 });
+            const entry = auditLogs.entries.find(e =>
+                e.target?.id === ban.user.id &&
+                Date.now() - e.createdTimestamp < 5000
+            );
+            if (!entry || entry.executor?.id === bot.client.user.id) return;
             await logManualModeration({
                 guild: ban.guild,
                 user: ban.user,
-                executor: entry?.executor,
-                reason: entry?.reason || ban.reason || 'No reason provided'
+                executor: entry.executor,
+                reason: entry.reason || ban.reason || 'No reason provided'
             }, 'ban', bot);
         } catch (error) {
             console.error('Error checking ban audit log:', error);
@@ -2134,14 +2128,17 @@ function registerEventHandlers(bot) {
 
     bot.client.on('guildBanRemove', async (ban) => {
         try {
-            const auditLogs = await ban.guild.fetchAuditLogs({ type: 23, limit: 1 }); // MemberBanRemove
-            const entry = auditLogs.entries.first();
-            if (entry?.executor?.id === bot.client.user.id) return;
+            const auditLogs = await ban.guild.fetchAuditLogs({ type: AuditLogEvent.MemberBanRemove, limit: 5 });
+            const entry = auditLogs.entries.find(e =>
+                e.target?.id === ban.user.id &&
+                Date.now() - e.createdTimestamp < 5000
+            );
+            if (!entry || entry.executor?.id === bot.client.user.id) return;
             await logManualModeration({
                 guild: ban.guild,
                 user: ban.user,
-                executor: entry?.executor,
-                reason: entry?.reason || 'No reason provided'
+                executor: entry.executor,
+                reason: entry.reason || 'No reason provided'
             }, 'unban', bot);
         } catch (error) {
             console.error('Error checking unban audit log:', error);

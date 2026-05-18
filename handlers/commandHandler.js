@@ -4,8 +4,6 @@ const { MinecraftServerListPing } = require('minecraft-status');
 const ms = require('ms');
 const MSG = require('../config/messages');
 
-// Map to store original channel permissions for lock/unlock
-const channelPermissions = new Map();
 
 async function fetchChannel(bot, channelId) {
     if (!channelId) return null;
@@ -644,13 +642,15 @@ async function handleCloseRequest(interaction, channel, bot) {
         return;
     }
 
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
     bot.db.get("SELECT * FROM tickets WHERE channel_id = ?", [channel.id], async (err, ticket) => {
         if (err || !ticket) {
             const embed = new EmbedBuilder()
                 .setTitle("Error")
                 .setDescription(MSG.TICKET_NOT_FOUND)
                 .setColor(0xff0000);
-            await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+            await interaction.editReply({ embeds: [embed] });
             return;
         }
 
@@ -672,14 +672,19 @@ async function handleCloseRequest(interaction, channel, bot) {
 
         const row = new ActionRowBuilder().addComponents(confirmButton, cancelButton);
 
-        const ticketCreator = await bot.client.users.fetch(ticket.user_id);
-        await channel.send({ content: `${ticketCreator}`, embeds: [embed], components: [row] });
+        let ticketCreator = null;
+        try {
+            ticketCreator = await bot.client.users.fetch(ticket.user_id);
+        } catch (e) {
+            console.error('[handleCloseRequest] could not fetch ticket creator:', e.message);
+        }
+        await channel.send({ content: ticketCreator ? `${ticketCreator}` : '', embeds: [embed], components: [row] });
 
         const successEmbed = new EmbedBuilder()
             .setTitle("Close Request Sent")
             .setDescription(MSG.TICKET_CLOSE_REQUEST_SENT(channel))
             .setColor(0x00ff00);
-        await interaction.reply({ embeds: [successEmbed], flags: MessageFlags.Ephemeral });
+        await interaction.editReply({ embeds: [successEmbed] });
     });
 }
 
@@ -729,26 +734,38 @@ async function handleTicketAdd(interaction, options, bot) {
         return;
     }
 
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
     bot.db.get("SELECT * FROM tickets WHERE channel_id = ?", [interaction.channel.id], async (err, ticket) => {
         if (err || !ticket) {
             const embed = new EmbedBuilder()
                 .setTitle("Error")
                 .setDescription(MSG.TICKET_NOT_FOUND)
                 .setColor(0xff0000);
-            await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+            await interaction.editReply({ embeds: [embed] });
             return;
         }
 
-        await interaction.channel.permissionOverwrites.create(user, {
-            ViewChannel: true,
-            SendMessages: true
-        });
+        try {
+            await interaction.channel.permissionOverwrites.create(user, {
+                ViewChannel: true,
+                SendMessages: true
+            });
+        } catch (error) {
+            console.error('Error adding user to ticket:', error);
+            const errEmbed = new EmbedBuilder()
+                .setTitle("Error")
+                .setDescription(MSG.BOT_NO_PERMISSION)
+                .setColor(0xff0000);
+            await interaction.editReply({ embeds: [errEmbed] });
+            return;
+        }
 
         const embed = new EmbedBuilder()
             .setTitle("User Added")
             .setDescription(MSG.TICKET_ADD_SUCCESS(user))
             .setColor(0x00ff00);
-        await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+        await interaction.editReply({ embeds: [embed] });
     });
 }
 
@@ -764,23 +781,35 @@ async function handleTicketRemove(interaction, options, bot) {
         return;
     }
 
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
     bot.db.get("SELECT * FROM tickets WHERE channel_id = ?", [interaction.channel.id], async (err, ticket) => {
         if (err || !ticket) {
             const embed = new EmbedBuilder()
                 .setTitle("Error")
                 .setDescription(MSG.TICKET_NOT_FOUND)
                 .setColor(0xff0000);
-            await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+            await interaction.editReply({ embeds: [embed] });
             return;
         }
 
-        await interaction.channel.permissionOverwrites.delete(user);
+        try {
+            await interaction.channel.permissionOverwrites.delete(user);
+        } catch (error) {
+            console.error('Error removing user from ticket:', error);
+            const errEmbed = new EmbedBuilder()
+                .setTitle("Error")
+                .setDescription(MSG.BOT_NO_PERMISSION)
+                .setColor(0xff0000);
+            await interaction.editReply({ embeds: [errEmbed] });
+            return;
+        }
 
         const embed = new EmbedBuilder()
             .setTitle("User Removed")
             .setDescription(MSG.TICKET_REMOVE_SUCCESS(user))
             .setColor(0x00ff00);
-        await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+        await interaction.editReply({ embeds: [embed] });
     });
 }
 
@@ -796,13 +825,15 @@ async function handleTicketBan(interaction, options, bot) {
         return;
     }
 
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
     bot.db.get("SELECT * FROM ticket_bans WHERE user_id = ?", [user.id], async (err, existingBan) => {
         if (err) {
             const embed = new EmbedBuilder()
                 .setTitle("Error")
                 .setDescription(MSG.GENERIC_DB_ERROR)
                 .setColor(0xff0000);
-            await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+            await interaction.editReply({ embeds: [embed] });
             return;
         }
 
@@ -811,7 +842,7 @@ async function handleTicketBan(interaction, options, bot) {
                 .setTitle("Already Banned")
                 .setDescription(MSG.TICKET_ALREADY_BANNED)
                 .setColor(0xff0000);
-            await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+            await interaction.editReply({ embeds: [embed] });
             return;
         }
 
@@ -821,7 +852,7 @@ async function handleTicketBan(interaction, options, bot) {
                     .setTitle("Error")
                     .setDescription(MSG.GENERIC_DB_ERROR)
                     .setColor(0xff0000);
-                await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+                await interaction.editReply({ embeds: [embed] });
                 return;
             }
 
@@ -829,7 +860,7 @@ async function handleTicketBan(interaction, options, bot) {
                 .setTitle("User Banned")
                 .setDescription(MSG.TICKET_BAN_SUCCESS(user))
                 .setColor(0x00ff00);
-            await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+            await interaction.editReply({ embeds: [embed] });
         });
     });
 }
@@ -846,13 +877,15 @@ async function handleTicketUnban(interaction, options, bot) {
         return;
     }
 
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
     bot.db.get("SELECT * FROM ticket_bans WHERE user_id = ?", [user.id], async (err, existingBan) => {
         if (err) {
             const embed = new EmbedBuilder()
                 .setTitle("Error")
                 .setDescription(MSG.GENERIC_DB_ERROR)
                 .setColor(0xff0000);
-            await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+            await interaction.editReply({ embeds: [embed] });
             return;
         }
 
@@ -861,7 +894,7 @@ async function handleTicketUnban(interaction, options, bot) {
                 .setTitle("Not Banned")
                 .setDescription(MSG.TICKET_NOT_BANNED)
                 .setColor(0xff0000);
-            await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+            await interaction.editReply({ embeds: [embed] });
             return;
         }
 
@@ -871,7 +904,7 @@ async function handleTicketUnban(interaction, options, bot) {
                     .setTitle("Error")
                     .setDescription(MSG.GENERIC_DB_ERROR)
                     .setColor(0xff0000);
-                await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+                await interaction.editReply({ embeds: [embed] });
                 return;
             }
 
@@ -879,7 +912,7 @@ async function handleTicketUnban(interaction, options, bot) {
                 .setTitle("User Unbanned")
                 .setDescription(MSG.TICKET_UNBAN_SUCCESS(user))
                 .setColor(0x00ff00);
-            await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+            await interaction.editReply({ embeds: [embed] });
         });
     });
 }
@@ -934,6 +967,8 @@ function cleanMinecraftText(text) {
 }
 
 async function handleAboutCommand(interaction, bot) {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
     const query = (sql) => new Promise((resolve, reject) =>
         bot.db.get(sql, (err, row) => err ? reject(err) : resolve(row))
     );
@@ -946,7 +981,7 @@ async function handleAboutCommand(interaction, bot) {
             query("SELECT COUNT(*) as count FROM punishments"),
         ]);
 
-        const uptime = Date.now() - bot.startTime;
+        const uptime = Date.now() - bot.startTime.getTime();
         const d = Math.floor(uptime / 86400000);
         const h = Math.floor((uptime % 86400000) / 3600000);
         const m = Math.floor((uptime % 3600000) / 60000);
@@ -965,10 +1000,10 @@ async function handleAboutCommand(interaction, bot) {
                 { name: "Uptime",               value: uptimeStr,                           inline: true }
             );
 
-        await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+        await interaction.editReply({ embeds: [embed] });
     } catch (err) {
         console.error('Error fetching bot statistics:', err);
-        await interaction.reply({ content: MSG.GENERIC_DB_ERROR, flags: MessageFlags.Ephemeral });
+        await interaction.editReply({ content: MSG.GENERIC_DB_ERROR });
     }
 }
 
@@ -1036,10 +1071,21 @@ async function handleBan(interaction, options, bot) {
 
         if (duration !== 'permanent') {
             const durationMs = ms(duration);
-            if (durationMs) {
-                expiresAt = new Date(Date.now() + durationMs);
-                durationText = `until <t:${Math.floor(expiresAt.getTime() / 1000)}:F>`;
+            if (!durationMs) {
+                const embed = new EmbedBuilder()
+                    .setTitle("Invalid Duration")
+                    .setDescription("Invalid duration format. Use formats like `10m`, `2h`, `7d`, or `permanent`.")
+                    .setColor(0xff0000);
+                await interaction.editReply({ embeds: [embed] });
+                return;
             }
+            expiresAt = new Date(Date.now() + durationMs);
+            durationText = `until <t:${Math.floor(expiresAt.getTime() / 1000)}:F>`;
+        }
+
+        const banOptions = { reason: `${reason} | By: ${interaction.user.username} | Duration: ${duration}` };
+        if (delmessages) {
+            banOptions.deleteMessageSeconds = 7 * 24 * 60 * 60; // 7 days in seconds
         }
 
         const dmEmbed = new EmbedBuilder()
@@ -1060,16 +1106,12 @@ async function handleBan(interaction, options, bot) {
             console.log(`Could not send DM to ${user.username}, they might have DMs disabled`);
         }
 
-        const banOptions = { reason: `${reason} | By: ${interaction.user.username} | Duration: ${duration}` };
-        if (delmessages) {
-            banOptions.deleteMessageSeconds = 7 * 24 * 60 * 60; // 7 days in seconds
-        }
-
         await interaction.guild.members.ban(user, banOptions);
 
         bot.db.run(
             "INSERT INTO punishments (user_id, type, reason, duration, punished_by, expires_at) VALUES (?, ?, ?, ?, ?, ?)",
-            [user.id, "ban", reason, duration, interaction.user.id, expiresAt?.toISOString()]
+            [user.id, "ban", reason, duration, interaction.user.id, expiresAt?.toISOString()],
+            (err) => { if (err) console.error('[handleBan] DB insert error:', err); }
         );
 
         const logChannel = await fetchChannel(bot, bot.CONFIG.LOG_CHANNEL);
@@ -1134,6 +1176,8 @@ async function handleUnban(interaction, options, bot) {
     try {
         const user = await bot.client.users.fetch(userId);
 
+        await interaction.guild.members.unban(userId, `${reason} | By: ${interaction.user.username}`);
+
         const dmEmbed = new EmbedBuilder()
             .setTitle(MSG.UNBAN_DM_TITLE)
             .setColor(0x00ff00)
@@ -1151,11 +1195,10 @@ async function handleUnban(interaction, options, bot) {
             console.log(`Could not send DM to ${user.username}, they might have DMs disabled or cannot be found`);
         }
 
-        await interaction.guild.members.unban(userId, `${reason} | By: ${interaction.user.username}`);
-
         bot.db.run(
             "UPDATE punishments SET active = FALSE WHERE user_id = ? AND type = 'ban' AND active = TRUE",
-            [userId]
+            [userId],
+            (err) => { if (err) console.error('[handleUnban] DB update error:', err); }
         );
 
         const logChannel = await fetchChannel(bot, bot.CONFIG.LOG_CHANNEL);
@@ -1183,9 +1226,12 @@ async function handleUnban(interaction, options, bot) {
 
     } catch (error) {
         console.error('Error unbanning user:', error);
+        // 10026 = Unknown Ban (user was not banned); show the "not found" message
+        // for that specific case and a generic error for everything else.
+        const description = error.code === 10026 ? MSG.UNBAN_INVALID_USER : MSG.BOT_NO_PERMISSION;
         const embed = new EmbedBuilder()
             .setTitle("Error")
-            .setDescription(MSG.UNBAN_INVALID_USER)
+            .setDescription(description)
             .setColor(0xff0000);
         await interaction.editReply({ embeds: [embed] });
     }
@@ -1247,9 +1293,11 @@ async function handleKick(interaction, options, bot) {
 
         await member.kick(`${reason} | By: ${interaction.user.username}`);
 
+
         bot.db.run(
             "INSERT INTO punishments (user_id, type, reason, duration, punished_by) VALUES (?, ?, ?, ?, ?)",
-            [user.id, "kick", reason, "permanent", interaction.user.id]
+            [user.id, "kick", reason, null, interaction.user.id],
+            (err) => { if (err) console.error('[handleKick] DB insert error:', err); }
         );
 
         const logChannel = await fetchChannel(bot, bot.CONFIG.LOG_CHANNEL);
@@ -1335,15 +1383,31 @@ async function handleMute(interaction, options, bot) {
         let timeoutDuration = null;
         let durationText = duration;
 
+        const MAX_TIMEOUT_MS = 28 * 24 * 60 * 60 * 1000;
+
         if (duration !== 'permanent') {
             const durationMs = ms(duration);
-            if (durationMs) {
-                timeoutDuration = durationMs;
-                const timeoutUntil = new Date(Date.now() + durationMs);
-                durationText = `until <t:${Math.floor(timeoutUntil.getTime() / 1000)}:F>`;
+            if (!durationMs) {
+                const embed = new EmbedBuilder()
+                    .setTitle("Invalid Duration")
+                    .setDescription("Invalid duration format. Use formats like `10m`, `2h`, `7d`, or `permanent`.")
+                    .setColor(0xff0000);
+                await interaction.editReply({ embeds: [embed] });
+                return;
             }
+            if (durationMs > MAX_TIMEOUT_MS) {
+                const embed = new EmbedBuilder()
+                    .setTitle("Duration Too Long")
+                    .setDescription("Discord timeout duration cannot exceed 28 days. Use `permanent` for the maximum (28-day) timeout.")
+                    .setColor(0xff0000);
+                await interaction.editReply({ embeds: [embed] });
+                return;
+            }
+            timeoutDuration = durationMs;
+            const timeoutUntil = new Date(Date.now() + durationMs);
+            durationText = `until <t:${Math.floor(timeoutUntil.getTime() / 1000)}:F>`;
         } else {
-            timeoutDuration = 28 * 24 * 60 * 60 * 1000;
+            timeoutDuration = MAX_TIMEOUT_MS;
             durationText = 'permanent (28 days maximum)';
         }
 
@@ -1374,7 +1438,8 @@ async function handleMute(interaction, options, bot) {
 
         bot.db.run(
             "INSERT INTO punishments (user_id, type, reason, duration, punished_by, expires_at) VALUES (?, ?, ?, ?, ?, ?)",
-            [user.id, "mute", reason, duration, interaction.user.id, expiresAt]
+            [user.id, "mute", reason, duration, interaction.user.id, expiresAt],
+            (err) => { if (err) console.error('[handleMute] DB insert error:', err); }
         );
 
         const logChannel = await fetchChannel(bot, bot.CONFIG.LOG_CHANNEL);
@@ -1447,6 +1512,8 @@ async function handleUnmute(interaction, options, bot) {
             return;
         }
 
+        await member.timeout(null, `${reason} | By: ${interaction.user.username}`);
+
         const dmEmbed = new EmbedBuilder()
             .setTitle(MSG.UNMUTE_DM_TITLE)
             .setColor(0x00ff00)
@@ -1464,11 +1531,10 @@ async function handleUnmute(interaction, options, bot) {
             console.log(`Could not send DM to ${user.username}, they might have DMs disabled`);
         }
 
-        await member.timeout(null, `${reason} | By: ${interaction.user.username}`);
-
         bot.db.run(
             "UPDATE punishments SET active = FALSE WHERE user_id = ? AND type = 'mute' AND active = TRUE",
-            [user.id]
+            [user.id],
+            (err) => { if (err) console.error('[handleUnmute] DB update error:', err); }
         );
 
         const logChannel = await fetchChannel(bot, bot.CONFIG.LOG_CHANNEL);
@@ -1522,17 +1588,7 @@ async function handlePromote(interaction, options, bot) {
     try {
         const member = await interaction.guild.members.fetch(user.id);
 
-        const allRankRoles = Object.values(bot.RANK_ROLES);
-        for (const roleId of allRankRoles) {
-            if (member.roles.cache.has(roleId)) {
-                await member.roles.remove(roleId);
-            }
-        }
-
-        if (member.roles.cache.has(bot.STAFF_ROLE)) {
-            await member.roles.remove(bot.STAFF_ROLE);
-        }
-
+        // Validate target role exists before touching the member's current roles
         const newRoleId = bot.RANK_ROLES[rank];
         if (!newRoleId) {
             const embed = new EmbedBuilder()
@@ -1553,28 +1609,30 @@ async function handlePromote(interaction, options, bot) {
             return;
         }
 
-        await member.roles.add(newRole);
+        // Remove all current rank roles + staff role in one API call
+        const allRankRoles = Object.values(bot.RANK_ROLES);
+        const rolesToRemove = allRankRoles.filter(roleId => member.roles.cache.has(roleId));
+        if (member.roles.cache.has(bot.STAFF_ROLE)) rolesToRemove.push(bot.STAFF_ROLE);
+        if (rolesToRemove.length > 0) await member.roles.remove(rolesToRemove);
 
+        // Build the full set of roles to add, then apply in one API call
+        const rolesToAdd = [newRole];
         if (bot.ROLE_HIERARCHY[rank]) {
             for (const additionalRank of bot.ROLE_HIERARCHY[rank]) {
                 if (additionalRank !== rank) {
                     const additionalRoleId = bot.RANK_ROLES[additionalRank];
                     if (additionalRoleId) {
                         const additionalRole = interaction.guild.roles.cache.get(additionalRoleId);
-                        if (additionalRole) {
-                            await member.roles.add(additionalRole);
-                        }
+                        if (additionalRole) rolesToAdd.push(additionalRole);
                     }
                 }
             }
         }
-
         if (bot.STAFF_RANKS.includes(rank)) {
             const staffRole = interaction.guild.roles.cache.get(bot.STAFF_ROLE);
-            if (staffRole) {
-                await member.roles.add(staffRole);
-            }
+            if (staffRole) rolesToAdd.push(staffRole);
         }
+        await member.roles.add(rolesToAdd);
 
         const logChannel = await fetchChannel(bot, bot.CONFIG.PROMOTION_LOG_CHANNEL);
         if (logChannel) {
@@ -1625,21 +1683,9 @@ async function handleDemote(interaction, options, bot) {
 
         if (!rank) {
             const allRankRoles = Object.values(bot.RANK_ROLES);
-            for (const roleId of allRankRoles) {
-                if (member.roles.cache.has(roleId)) {
-                    const role = interaction.guild.roles.cache.get(roleId);
-                    if (role) {
-                        await member.roles.remove(role);
-                    }
-                }
-            }
-
-            if (member.roles.cache.has(bot.STAFF_ROLE)) {
-                const staffRole = interaction.guild.roles.cache.get(bot.STAFF_ROLE);
-                if (staffRole) {
-                    await member.roles.remove(staffRole);
-                }
-            }
+            const rolesToRemove = allRankRoles.filter(roleId => member.roles.cache.has(roleId));
+            if (member.roles.cache.has(bot.STAFF_ROLE)) rolesToRemove.push(bot.STAFF_ROLE);
+            if (rolesToRemove.length > 0) await member.roles.remove(rolesToRemove);
 
             const joinRole = interaction.guild.roles.cache.get(bot.CONFIG.JOIN_ROLE);
             if (joinRole && !member.roles.cache.has(bot.CONFIG.JOIN_ROLE)) {
@@ -1666,23 +1712,7 @@ async function handleDemote(interaction, options, bot) {
             await interaction.editReply({ embeds: [embed] });
 
         } else {
-            const allRankRoles = Object.values(bot.RANK_ROLES);
-            for (const roleId of allRankRoles) {
-                if (member.roles.cache.has(roleId)) {
-                    const role = interaction.guild.roles.cache.get(roleId);
-                    if (role) {
-                        await member.roles.remove(role);
-                    }
-                }
-            }
-
-            if (!bot.STAFF_RANKS.includes(rank) && member.roles.cache.has(bot.STAFF_ROLE)) {
-                const staffRole = interaction.guild.roles.cache.get(bot.STAFF_ROLE);
-                if (staffRole) {
-                    await member.roles.remove(staffRole);
-                }
-            }
-
+            // Validate target role exists before touching the member's current roles
             const newRoleId = bot.RANK_ROLES[rank];
             if (!newRoleId) {
                 const embed = new EmbedBuilder()
@@ -1703,28 +1733,30 @@ async function handleDemote(interaction, options, bot) {
                 return;
             }
 
-            await member.roles.add(newRole);
+            const allRankRoles = Object.values(bot.RANK_ROLES);
+            const rolesToRemove = allRankRoles.filter(roleId => member.roles.cache.has(roleId));
+            if (!bot.STAFF_RANKS.includes(rank) && member.roles.cache.has(bot.STAFF_ROLE)) {
+                rolesToRemove.push(bot.STAFF_ROLE);
+            }
+            if (rolesToRemove.length > 0) await member.roles.remove(rolesToRemove);
 
+            const rolesToAdd = [newRole];
             if (bot.ROLE_HIERARCHY[rank]) {
                 for (const additionalRank of bot.ROLE_HIERARCHY[rank]) {
                     if (additionalRank !== rank) {
                         const additionalRoleId = bot.RANK_ROLES[additionalRank];
                         if (additionalRoleId) {
                             const additionalRole = interaction.guild.roles.cache.get(additionalRoleId);
-                            if (additionalRole) {
-                                await member.roles.add(additionalRole);
-                            }
+                            if (additionalRole) rolesToAdd.push(additionalRole);
                         }
                     }
                 }
             }
-
             if (bot.STAFF_RANKS.includes(rank)) {
                 const staffRole = interaction.guild.roles.cache.get(bot.STAFF_ROLE);
-                if (staffRole) {
-                    await member.roles.add(staffRole);
-                }
+                if (staffRole) rolesToAdd.push(staffRole);
             }
+            await member.roles.add(rolesToAdd);
 
             const logChannel = await fetchChannel(bot, bot.CONFIG.PROMOTION_LOG_CHANNEL);
             if (logChannel) {
@@ -1784,26 +1816,32 @@ async function handleClearCommand(interaction, options, bot) {
     const TWO_WEEKS_MS = 14 * 24 * 60 * 60 * 1000;
 
     try {
+        let deletedCount = 0;
+
         if (amount === 0) {
             for (;;) {
                 const messages = await interaction.channel.messages.fetch({ limit: 100 });
                 const deletable = messages.filter(m => Date.now() - m.createdTimestamp < TWO_WEEKS_MS);
                 if (deletable.size === 0) break;
                 const deleted = await interaction.channel.bulkDelete(deletable, true);
+                deletedCount += deleted.size;
                 if (deleted.size === 0) break;
             }
         } else {
             const messages = await interaction.channel.messages.fetch({ limit: amount });
             const deletable = messages.filter(m => Date.now() - m.createdTimestamp < TWO_WEEKS_MS);
             if (deletable.size > 0) {
-                await interaction.channel.bulkDelete(deletable, true);
+                const deleted = await interaction.channel.bulkDelete(deletable, true);
+                deletedCount = deleted.size;
             }
         }
 
         const embed = new EmbedBuilder()
             .setTitle("Messages Cleared")
-            .setDescription(MSG.CLEAR_SUCCESS)
-            .setColor(0x00ff00);
+            .setDescription(deletedCount > 0
+                ? `Deleted **${deletedCount}** message${deletedCount === 1 ? '' : 's'}.`
+                : 'No messages could be deleted (they may all be older than 14 days).')
+            .setColor(deletedCount > 0 ? 0x00ff00 : 0xffcc00);
         await interaction.editReply({ embeds: [embed] });
 
     } catch (error) {
@@ -1820,6 +1858,26 @@ async function handleReportCommand(interaction, options, bot) {
     const user = options.getUser('user');
     const proof = options.getString('proof');
 
+    if (user.id === interaction.user.id) {
+        const embed = new EmbedBuilder()
+            .setTitle("Invalid Report")
+            .setDescription("You can't report yourself.")
+            .setColor(0xff0000);
+        await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+        return;
+    }
+
+    if (user.bot) {
+        const embed = new EmbedBuilder()
+            .setTitle("Invalid Report")
+            .setDescription("You can't report bots.")
+            .setColor(0xff0000);
+        await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+        return;
+    }
+
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
     bot.db.get("SELECT * FROM report_bans WHERE user_id = ?", [interaction.user.id], async (err, ban) => {
         if (err) {
             console.error('Error checking report bans:', err);
@@ -1827,7 +1885,7 @@ async function handleReportCommand(interaction, options, bot) {
                 .setTitle("Error")
                 .setDescription(MSG.GENERIC_DB_ERROR)
                 .setColor(0xff0000);
-            await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+            await interaction.editReply({ embeds: [embed] });
             return;
         }
 
@@ -1836,25 +1894,7 @@ async function handleReportCommand(interaction, options, bot) {
                 .setTitle("Report Banned")
                 .setDescription(MSG.REPORT_BANNED)
                 .setColor(0xff0000);
-            await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
-            return;
-        }
-
-        if (user.id === interaction.user.id) {
-            const embed = new EmbedBuilder()
-                .setTitle("Invalid Report")
-                .setDescription("You can't report yourself.")
-                .setColor(0xff0000);
-            await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
-            return;
-        }
-
-        if (user.bot) {
-            const embed = new EmbedBuilder()
-                .setTitle("Invalid Report")
-                .setDescription("You can't report bots.")
-                .setColor(0xff0000);
-            await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+            await interaction.editReply({ embeds: [embed] });
             return;
         }
 
@@ -1864,7 +1904,7 @@ async function handleReportCommand(interaction, options, bot) {
                 .setTitle("Error")
                 .setDescription("Report channel not found.")
                 .setColor(0xff0000);
-            await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+            await interaction.editReply({ embeds: [embed] });
             return;
         }
 
@@ -1909,14 +1949,14 @@ async function handleReportCommand(interaction, options, bot) {
                 .setTitle("Report Submitted")
                 .setDescription(`Your report against ${user.tag} has been submitted to the staff team.`)
                 .setColor(0x00ff00);
-            await interaction.reply({ embeds: [successEmbed], flags: MessageFlags.Ephemeral });
+            await interaction.editReply({ embeds: [successEmbed] });
         } catch (error) {
             console.error('Error submitting report:', error);
             const errEmbed = new EmbedBuilder()
                 .setTitle("Error")
                 .setDescription(MSG.GENERIC_ERROR)
                 .setColor(0xff0000);
-            await interaction.reply({ embeds: [errEmbed], flags: MessageFlags.Ephemeral }).catch(() => {});
+            await interaction.editReply({ embeds: [errEmbed] }).catch(() => {});
         }
     });
 }
@@ -1932,6 +1972,7 @@ async function handleReportBan(interaction, options, bot) {
     }
 
     const user = options.getUser('user');
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     bot.db.get("SELECT * FROM report_bans WHERE user_id = ?", [user.id], async (err, existingBan) => {
         if (err) {
@@ -1940,7 +1981,7 @@ async function handleReportBan(interaction, options, bot) {
                 .setTitle("Error")
                 .setDescription(MSG.GENERIC_DB_ERROR)
                 .setColor(0xff0000);
-            await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+            await interaction.editReply({ embeds: [embed] });
             return;
         }
 
@@ -1949,7 +1990,7 @@ async function handleReportBan(interaction, options, bot) {
                 .setTitle("Already Banned")
                 .setDescription("That user is already report-banned.")
                 .setColor(0xff0000);
-            await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+            await interaction.editReply({ embeds: [embed] });
             return;
         }
 
@@ -1960,7 +2001,7 @@ async function handleReportBan(interaction, options, bot) {
                     .setTitle("Error")
                     .setDescription(MSG.GENERIC_DB_ERROR)
                     .setColor(0xff0000);
-                await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+                await interaction.editReply({ embeds: [embed] });
                 return;
             }
 
@@ -1968,7 +2009,7 @@ async function handleReportBan(interaction, options, bot) {
                 .setTitle("Report Ban Added")
                 .setDescription(MSG.REPORT_BAN_SUCCESS(user))
                 .setColor(0x00ff00);
-            await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+            await interaction.editReply({ embeds: [embed] });
         });
     });
 }
@@ -1984,6 +2025,7 @@ async function handleReportUnban(interaction, options, bot) {
     }
 
     const user = options.getUser('user');
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     bot.db.get("SELECT * FROM report_bans WHERE user_id = ?", [user.id], async (err, existingBan) => {
         if (err) {
@@ -1992,7 +2034,7 @@ async function handleReportUnban(interaction, options, bot) {
                 .setTitle("Error")
                 .setDescription(MSG.GENERIC_DB_ERROR)
                 .setColor(0xff0000);
-            await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+            await interaction.editReply({ embeds: [embed] });
             return;
         }
 
@@ -2001,7 +2043,7 @@ async function handleReportUnban(interaction, options, bot) {
                 .setTitle("Not Banned")
                 .setDescription("That user doesn't have a report ban.")
                 .setColor(0xff0000);
-            await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+            await interaction.editReply({ embeds: [embed] });
             return;
         }
 
@@ -2012,7 +2054,7 @@ async function handleReportUnban(interaction, options, bot) {
                     .setTitle("Error")
                     .setDescription(MSG.GENERIC_DB_ERROR)
                     .setColor(0xff0000);
-                await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+                await interaction.editReply({ embeds: [embed] });
                 return;
             }
 
@@ -2020,7 +2062,7 @@ async function handleReportUnban(interaction, options, bot) {
                 .setTitle("Report Ban Removed")
                 .setDescription(MSG.REPORT_UNBAN_SUCCESS(user))
                 .setColor(0x00ff00);
-            await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+            await interaction.editReply({ embeds: [embed] });
         });
     });
 }
@@ -2053,8 +2095,9 @@ async function handleProofCommand(interaction, options, bot) {
             return;
         }
 
+        const safeProofUrl = proofUrl.length > 1024 ? proofUrl.slice(0, 1021) + '...' : proofUrl;
         const newEmbed = EmbedBuilder.from(embed)
-            .addFields({ name: "Proof", value: proofUrl, inline: true });
+            .addFields({ name: "Proof", value: safeProofUrl, inline: true });
 
         await message.edit({ embeds: [newEmbed] });
         await interaction.reply({ content: "Proof added.", flags: MessageFlags.Ephemeral });
@@ -2078,16 +2121,6 @@ async function handleLockCommand(interaction, bot) {
     const channel = interaction.channel;
 
     try {
-        // Store current permissions
-        const currentPermissions = channel.permissionOverwrites.cache.map(overwrite => ({
-            id: overwrite.id,
-            allow: overwrite.allow.bitfield,
-            deny: overwrite.deny.bitfield,
-            type: overwrite.type
-        }));
-
-        channelPermissions.set(channel.id, currentPermissions);
-
         // Lock channel for everyone
         await channel.permissionOverwrites.edit(interaction.guild.roles.everyone, {
             SendMessages: false,
@@ -2124,7 +2157,11 @@ async function handleLockCommand(interaction, bot) {
             .setTitle("Error")
             .setDescription(MSG.GENERIC_ERROR)
             .setColor(0xff0000);
-        await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+        if (interaction.replied || interaction.deferred) {
+            await interaction.editReply({ embeds: [embed] });
+        } else {
+            await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+        }
     }
 }
 
@@ -2151,28 +2188,6 @@ async function handleUnlockCommand(interaction, bot) {
             SendMessages: null,
             AddReactions: null
         });
-
-        // Best-effort restore of any other overwrites captured at lock time.
-        const savedPermissions = channelPermissions.get(channel.id);
-        if (savedPermissions) {
-            for (const perm of savedPermissions) {
-                try {
-                    const target = perm.type === 0 ?
-                        interaction.guild.roles.cache.get(perm.id) :
-                        interaction.guild.members.cache.get(perm.id);
-
-                    if (target) {
-                        await channel.permissionOverwrites.edit(target, {
-                            SendMessages: null,
-                            AddReactions: null
-                        });
-                    }
-                } catch (error) {
-                    console.error(`Error restoring permissions for ${perm.id}:`, error);
-                }
-            }
-            channelPermissions.delete(channel.id);
-        }
 
         const embed = new EmbedBuilder()
             .setTitle("Channel Unlocked")
@@ -2204,7 +2219,11 @@ async function handleUnlockCommand(interaction, bot) {
             .setTitle("Error")
             .setDescription(MSG.GENERIC_ERROR)
             .setColor(0xff0000);
-        await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+        if (interaction.replied || interaction.deferred) {
+            await interaction.editReply({ embeds: [embed] });
+        } else {
+            await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+        }
     }
 }
 

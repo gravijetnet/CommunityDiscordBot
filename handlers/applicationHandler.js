@@ -125,6 +125,8 @@ class ApplicationHandler {
                 { label: 'Beta-Tester', value: 'Beta-Tester' }
             ]);
 
+        const row = new ActionRowBuilder().addComponents(selectMenu);
+
         try {
             const messages = await channel.messages.fetch({ limit: 10 });
             const existingPanel = messages.find(msg =>
@@ -134,7 +136,6 @@ class ApplicationHandler {
             );
 
             if (existingPanel) {
-                const row = new ActionRowBuilder().addComponents(selectMenu);
                 await existingPanel.edit({ embeds: [embed], components: [row] });
                 console.log('Application panel updated');
                 return;
@@ -144,8 +145,6 @@ class ApplicationHandler {
         } catch (error) {
             console.error('Error clearing channel:', error);
         }
-
-        const row = new ActionRowBuilder().addComponents(selectMenu);
 
         await channel.send({ embeds: [embed], components: [row] });
         console.log('Application panel created successfully');
@@ -157,7 +156,7 @@ class ApplicationHandler {
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
         const existingSession = this.sessions.get(interaction.user.id);
-        if (existingSession && existingSession.status === 'in_progress') {
+        if (existingSession && (existingSession.status === 'in_progress' || existingSession.status === 'confirmation')) {
             const embed = new EmbedBuilder()
                 .setTitle("Application In Progress")
                 .setDescription(MSG.APPLICATION_ALREADY_OPEN)
@@ -223,7 +222,7 @@ class ApplicationHandler {
 
         if (category === 'Builder') {
             description += MSG.APPLICATION_CONFIRM_BUILDER_NOTE;
-        } else if (category === 'Dev' || category === 'Developer') {
+        } else if (category === 'Developer') {
             description += MSG.APPLICATION_CONFIRM_DEV_NOTE;
         }
 
@@ -249,7 +248,8 @@ class ApplicationHandler {
         this.sessions.set(user.id, {
             category: category,
             messageId: dm.id,
-            status: 'confirmation'
+            status: 'confirmation',
+            createdAt: new Date()
         });
 
         return dm;
@@ -273,6 +273,12 @@ class ApplicationHandler {
             function (err) {
                 if (err) {
                     console.error('Error creating application:', err);
+                    interaction.update({ embeds: [
+                        new EmbedBuilder()
+                            .setTitle('Error')
+                            .setDescription(MSG.GENERIC_DB_ERROR)
+                            .setColor(0xff0000)
+                    ], components: [] }).catch(e => console.error('[startApplication] could not ack failed DB insert:', e.message));
                     return;
                 }
 
@@ -374,7 +380,8 @@ class ApplicationHandler {
 
         this.bot.db.run(
             "UPDATE applications SET answers = ? WHERE id = ?",
-            [JSON.stringify(session.answers), session.applicationId]
+            [JSON.stringify(session.answers), session.applicationId],
+            (err) => { if (err) console.error('[handleApplicationAnswer] DB update error:', err); }
         );
 
         await this.askQuestion(message.author, session.applicationId, session.currentQuestion + 1);
@@ -419,6 +426,15 @@ class ApplicationHandler {
             .setStyle(ButtonStyle.Danger);
 
         const row = new ActionRowBuilder().addComponents(submitButton, editButton, cancelButton);
+
+        // Remove the Cancel button from the last question message now that the
+        // summary is being shown. Without this the old Cancel button stays
+        // clickable and pressing it cancels a fully-answered application.
+        if (session.lastQuestionMessage) {
+            try {
+                await session.lastQuestionMessage.edit({ components: [] });
+            } catch { /* ignore — message may already be gone */ }
+        }
 
         try {
             const summaryMessage = await user.send({ embeds: [embed], components: [row] });
@@ -497,7 +513,8 @@ class ApplicationHandler {
     }
 
     async handleEditModal(interaction) {
-        const questionNumber = parseInt(interaction.fields.getTextInputValue('question_number'));
+        const rawQN = interaction.fields.getTextInputValue('question_number').trim();
+        const questionNumber = /^\d+$/.test(rawQN) ? parseInt(rawQN, 10) : NaN;
         const newAnswer = interaction.fields.getTextInputValue('new_answer');
         const userId = interaction.user.id;
 
@@ -522,7 +539,8 @@ class ApplicationHandler {
 
         this.bot.db.run(
             "UPDATE applications SET answers = ? WHERE id = ?",
-            [JSON.stringify(summarySession.answers), summarySession.applicationId]
+            [JSON.stringify(summarySession.answers), summarySession.applicationId],
+            (err) => { if (err) console.error('[handleEditModal] DB update error:', err); }
         );
 
         const mainSession = this.sessions.get(userId);
@@ -604,7 +622,8 @@ class ApplicationHandler {
 
         this.bot.db.run(
             "UPDATE applications SET status = 'submitted', submitted_at = ? WHERE id = ?",
-            [submittedAt.toISOString(), applicationId]
+            [submittedAt.toISOString(), applicationId],
+            (err) => { if (err) console.error('[completeApplication] DB update error:', err); }
         );
 
         this.sessions.delete(userId);
@@ -780,6 +799,19 @@ class ApplicationHandler {
                     return;
                 }
 
+                // Guard against double-processing: accept/deny actions only make
+                // sense on a submitted application. Without this check a second
+                // click would re-send a DM, re-assign roles, and log a duplicate
+                // promotion entry.
+                if (['accept', 'deny', 'accept_reason', 'deny_reason'].includes(action) &&
+                        application.status !== 'submitted') {
+                    await safeReply(interaction, {
+                        content: `This application has already been reviewed (status: **${application.status}**).`,
+                        flags: MessageFlags.Ephemeral
+                    });
+                    return;
+                }
+
                 try {
                     const user = await this.bot.client.users.fetch(application.user_id);
 
@@ -814,8 +846,20 @@ class ApplicationHandler {
                 const roleId = this.bot.RANK_ROLES[application.category];
 
                 if (roleId) {
-                    await member.roles.add(roleId);
-                    console.log(`Role ${roleId} (${application.category}) assigned to ${user.tag}`);
+                    const rolesToAdd = [roleId];
+                    if (this.bot.ROLE_HIERARCHY[application.category]) {
+                        for (const additionalRank of this.bot.ROLE_HIERARCHY[application.category]) {
+                            if (additionalRank !== application.category) {
+                                const additionalRoleId = this.bot.RANK_ROLES[additionalRank];
+                                if (additionalRoleId) rolesToAdd.push(additionalRoleId);
+                            }
+                        }
+                    }
+                    if (this.bot.STAFF_RANKS.includes(application.category)) {
+                        rolesToAdd.push(this.bot.STAFF_ROLE);
+                    }
+                    await member.roles.add(rolesToAdd);
+                    console.log(`Roles assigned to ${user.tag} for ${application.category} application`);
                 } else {
                     console.warn(`No role found for category: ${application.category}`);
                 }
@@ -836,7 +880,8 @@ class ApplicationHandler {
 
             this.bot.db.run(
                 "UPDATE applications SET status = 'accepted', reviewed_by = ? WHERE id = ?",
-                [interaction.user.id, application.id]
+                [interaction.user.id, application.id],
+                (err) => { if (err) console.error('[acceptApplication] DB update error:', err); }
             );
 
             await this.logApplicationAction(application.id, 'accepted', interaction.user.id);
@@ -883,7 +928,8 @@ class ApplicationHandler {
 
             this.bot.db.run(
                 "UPDATE applications SET status = 'denied', reviewed_by = ? WHERE id = ?",
-                [interaction.user.id, application.id]
+                [interaction.user.id, application.id],
+                (err) => { if (err) console.error('[denyApplication] DB update error:', err); }
             );
 
             await this.logApplicationAction(application.id, 'denied', interaction.user.id);
@@ -956,6 +1002,14 @@ class ApplicationHandler {
                     return;
                 }
 
+                if (application.status !== 'submitted') {
+                    await safeReply(interaction, {
+                        content: `This application has already been reviewed (status: **${application.status}**).`,
+                        flags: MessageFlags.Ephemeral
+                    });
+                    return;
+                }
+
                 try {
                     const user = await this.bot.client.users.fetch(application.user_id);
 
@@ -984,8 +1038,20 @@ class ApplicationHandler {
                 const roleId = this.bot.RANK_ROLES[application.category];
 
                 if (roleId) {
-                    await member.roles.add(roleId);
-                    console.log(`Role ${roleId} (${application.category}) assigned to ${user.tag} (with reason)`);
+                    const rolesToAdd = [roleId];
+                    if (this.bot.ROLE_HIERARCHY[application.category]) {
+                        for (const additionalRank of this.bot.ROLE_HIERARCHY[application.category]) {
+                            if (additionalRank !== application.category) {
+                                const additionalRoleId = this.bot.RANK_ROLES[additionalRank];
+                                if (additionalRoleId) rolesToAdd.push(additionalRoleId);
+                            }
+                        }
+                    }
+                    if (this.bot.STAFF_RANKS.includes(application.category)) {
+                        rolesToAdd.push(this.bot.STAFF_ROLE);
+                    }
+                    await member.roles.add(rolesToAdd);
+                    console.log(`Roles assigned to ${user.tag} for ${application.category} application (with reason)`);
                 } else {
                     console.warn(`No role found for category: ${application.category}`);
                 }
@@ -1006,7 +1072,8 @@ class ApplicationHandler {
 
             this.bot.db.run(
                 "UPDATE applications SET status = 'accepted', reviewed_by = ?, review_reason = ? WHERE id = ?",
-                [interaction.user.id, reason, application.id]
+                [interaction.user.id, reason, application.id],
+                (err) => { if (err) console.error('[acceptApplicationWithReason] DB update error:', err); }
             );
 
             await this.logApplicationAction(application.id, 'accepted_with_reason', interaction.user.id, reason);
@@ -1053,7 +1120,8 @@ class ApplicationHandler {
 
             this.bot.db.run(
                 "UPDATE applications SET status = 'denied', reviewed_by = ?, review_reason = ? WHERE id = ?",
-                [interaction.user.id, reason, application.id]
+                [interaction.user.id, reason, application.id],
+                (err) => { if (err) console.error('[denyApplicationWithReason] DB update error:', err); }
             );
 
             await this.logApplicationAction(application.id, 'denied_with_reason', interaction.user.id, reason);
@@ -1128,7 +1196,8 @@ class ApplicationHandler {
 
             this.bot.db.run(
                 "INSERT INTO tickets (user_id, channel_id, category) VALUES (?, ?, ?)",
-                [user.id, channel.id, 'application']
+                [user.id, channel.id, 'application'],
+                (err) => { if (err) console.error('[openApplicationTicket] DB insert error:', err); }
             );
 
             await safeReply(interaction, {
@@ -1166,7 +1235,8 @@ class ApplicationHandler {
             if (session.applicationId) {
                 this.bot.db.run(
                     "UPDATE applications SET status = 'cancelled' WHERE id = ?",
-                    [session.applicationId]
+                    [session.applicationId],
+                    (err) => { if (err) console.error('[cancelApplication] DB update error:', err); }
                 );
                 await this.logApplicationAction(session.applicationId, 'cancelled', userId);
             }
@@ -1212,7 +1282,8 @@ class ApplicationHandler {
 
         this.bot.db.run(
             "UPDATE applications SET status = 'timeout' WHERE id = ?",
-            [session.applicationId]
+            [session.applicationId],
+            (err) => { if (err) console.error('[timeoutApplication] DB update error:', err); }
         );
 
         await this.logApplicationAction(session.applicationId, 'timeout', user.id);
@@ -1248,13 +1319,21 @@ class ApplicationHandler {
     async logApplicationAction(applicationId, action, userId, details = null) {
         this.bot.db.run(
             "INSERT INTO application_logs (application_id, action, user_id, details) VALUES (?, ?, ?, ?)",
-            [applicationId, action, userId, details]
+            [applicationId, action, userId, details],
+            (err) => { if (err) console.error('[logApplicationAction] DB insert error:', err); }
         );
     }
 
     async checkSessions() {
         const now = new Date();
+        const confirmationMaxMs = (this.bot.CONFIG.APPLICATION_TIMEOUT_HOURS ?? 3) * 60 * 60 * 1000;
         for (const [userId, session] of this.sessions.entries()) {
+            if (session.status === 'confirmation') {
+                if (session.createdAt && now - new Date(session.createdAt) > confirmationMaxMs) {
+                    this.sessions.delete(userId);
+                }
+                continue;
+            }
             if (now > new Date(session.expiresAt)) {
                 try {
                     const user = await this.bot.client.users.fetch(userId);

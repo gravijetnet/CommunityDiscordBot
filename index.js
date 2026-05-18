@@ -29,8 +29,6 @@ class TicketBot {
 
         this.db = null;
         this.startTime = new Date();
-        this.ticketCounts = new Map();
-        this.applicationSessions = new Map();
         this.CONFIG = CONFIG;
         this.RANK_ROLES      = CONFIG.RANK_ROLES;
         this.STAFF_ROLE      = CONFIG.STAFF_ROLE;
@@ -62,14 +60,14 @@ class TicketBot {
             status TEXT DEFAULT 'open',
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             closed_at DATETIME
-        )`);
+        )`, (err) => { if (err) console.error('Error creating tickets table:', err); });
 
         this.db.run(`CREATE TABLE IF NOT EXISTS ticket_bans (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id TEXT NOT NULL,
             banned_by TEXT NOT NULL,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )`);
+        )`, (err) => { if (err) console.error('Error creating ticket_bans table:', err); });
 
         this.db.run(`CREATE TABLE IF NOT EXISTS punishments (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -81,14 +79,14 @@ class TicketBot {
             expires_at DATETIME,
             active BOOLEAN DEFAULT TRUE,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )`);
+        )`, (err) => { if (err) console.error('Error creating punishments table:', err); });
 
         this.db.run(`CREATE TABLE IF NOT EXISTS report_bans (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id TEXT NOT NULL,
             banned_by TEXT NOT NULL,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )`);
+        )`, (err) => { if (err) console.error('Error creating report_bans table:', err); });
 
         this.db.run(`CREATE TABLE IF NOT EXISTS applications (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -103,7 +101,7 @@ class TicketBot {
             reviewed_by TEXT,
             review_reason TEXT,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )`);
+        )`, (err) => { if (err) console.error('Error creating applications table:', err); });
 
         this.db.run(`CREATE TABLE IF NOT EXISTS application_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -113,8 +111,18 @@ class TicketBot {
             details TEXT,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (application_id) REFERENCES applications (id)
-        )`, () => {
-            console.log('All database tables created/verified');
+        )`, (err) => {
+            if (err) { console.error('Error creating application_logs table:', err); return; }
+            this.db.run(`CREATE INDEX IF NOT EXISTS idx_tickets_user_id    ON tickets (user_id)`,          (e) => { if (e) console.error('Error creating index idx_tickets_user_id:', e); });
+            this.db.run(`CREATE INDEX IF NOT EXISTS idx_tickets_channel_id ON tickets (channel_id)`,       (e) => { if (e) console.error('Error creating index idx_tickets_channel_id:', e); });
+            this.db.run(`CREATE INDEX IF NOT EXISTS idx_tickets_status     ON tickets (status)`,           (e) => { if (e) console.error('Error creating index idx_tickets_status:', e); });
+            this.db.run(`CREATE INDEX IF NOT EXISTS idx_applications_user_id ON applications (user_id)`,   (e) => { if (e) console.error('Error creating index idx_applications_user_id:', e); });
+            this.db.run(`CREATE INDEX IF NOT EXISTS idx_applications_status  ON applications (status)`,    (e) => { if (e) console.error('Error creating index idx_applications_status:', e); });
+            this.db.run(`CREATE INDEX IF NOT EXISTS idx_punishments_user_id  ON punishments (user_id)`,    (e) => { if (e) console.error('Error creating index idx_punishments_user_id:', e); });
+            this.db.run(`CREATE INDEX IF NOT EXISTS idx_punishments_active   ON punishments (active)`,     (e) => { if (e) console.error('Error creating index idx_punishments_active:', e); });
+            this.db.run(`CREATE INDEX IF NOT EXISTS idx_ticket_bans_user_id  ON ticket_bans (user_id)`,   (e) => { if (e) console.error('Error creating index idx_ticket_bans_user_id:', e); });
+            this.db.run(`CREATE INDEX IF NOT EXISTS idx_report_bans_user_id  ON report_bans (user_id)`,   (e) => { if (e) console.error('Error creating index idx_report_bans_user_id:', e); });
+            console.log('All database tables and indexes created/verified');
             this.cleanupExpiredApplications();
         });
     }

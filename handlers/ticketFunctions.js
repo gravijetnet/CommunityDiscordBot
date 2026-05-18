@@ -48,21 +48,34 @@ async function createTicket(interaction, category, bot) {
                 return resolve();
             }
 
-            bot.db.get("SELECT COUNT(*) as count FROM tickets WHERE user_id = ?", [interaction.user.id], async (err, row) => {
-                if (err) {
-                    await safeReply(interaction, { content: MSG.GENERIC_DB_ERROR, flags: MessageFlags.Ephemeral });
-                    return resolve();
-                }
+            bot.db.get(
+                "SELECT COUNT(*) as total, COALESCE(SUM(status = 'open'), 0) as open_count FROM tickets WHERE user_id = ?",
+                [interaction.user.id],
+                async (err, row) => {
+                    if (err) {
+                        await safeReply(interaction, { content: MSG.GENERIC_DB_ERROR, flags: MessageFlags.Ephemeral });
+                        return resolve();
+                    }
 
-                const ticketCount = (row?.count ?? 0) + 1;
-                try {
-                    await createTicketChannel(interaction, category, ticketCount, bot);
-                } catch (e) {
-                    console.error('Error creating ticket channel:', e);
-                    await safeReply(interaction, { content: MSG.GENERIC_ERROR, flags: MessageFlags.Ephemeral });
+                    if ((row?.open_count ?? 0) > 0) {
+                        const embed = new EmbedBuilder()
+                            .setTitle("Ticket Already Open")
+                            .setDescription("You already have an open ticket. Please use it or ask staff to close it before opening a new one.")
+                            .setColor(0xff0000);
+                        await safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
+                        return resolve();
+                    }
+
+                    const ticketCount = (row?.total ?? 0) + 1;
+                    try {
+                        await createTicketChannel(interaction, category, ticketCount, bot);
+                    } catch (e) {
+                        console.error('Error creating ticket channel:', e);
+                        await safeReply(interaction, { content: MSG.GENERIC_ERROR, flags: MessageFlags.Ephemeral });
+                    }
+                    resolve();
                 }
-                resolve();
-            });
+            );
         });
     });
 }
@@ -81,6 +94,11 @@ async function createTicketChannel(interaction, category, ticketCount, bot) {
     const safeUser = interaction.user.username.toLowerCase().replace(/[^a-z0-9-]/g, '') || 'user';
     const channelName = `${category}-${safeUser}-${ticketCount.toString().padStart(4, '0')}`.substring(0, 100);
     const catConfig = bot.CONFIG.CATEGORY_PERMISSIONS[category];
+
+    if (!catConfig) {
+        await safeReply(interaction, { content: MSG.GENERIC_ERROR, flags: MessageFlags.Ephemeral });
+        return;
+    }
 
     const permissionOverwrites = [
         {
@@ -109,7 +127,8 @@ async function createTicketChannel(interaction, category, ticketCount, bot) {
 
     bot.db.run(
         "INSERT INTO tickets (user_id, channel_id, category) VALUES (?, ?, ?)",
-        [interaction.user.id, channel.id, category]
+        [interaction.user.id, channel.id, category],
+        (err) => { if (err) console.error('[createTicketChannel] DB insert error:', err); }
     );
 
     const embed = new EmbedBuilder()
