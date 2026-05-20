@@ -155,28 +155,38 @@ async function createTicketChannel(interaction, category, ticketCount, bot) {
 
 async function closeTicketChannel(channel, closer, bot) {
     return new Promise((resolve, reject) => {
-        bot.db.get("SELECT * FROM tickets WHERE channel_id = ?", [channel.id], async (err, ticket) => {
+        bot.db.get("SELECT * FROM tickets WHERE channel_id = ? AND status = 'open'", [channel.id], async (err, ticket) => {
             if (err) return reject(err);
-            if (!ticket) return resolve();
+            if (!ticket) return resolve(); // already closed or not a ticket channel
 
             bot.db.run(
-                "UPDATE tickets SET status = 'closed', closed_at = ? WHERE channel_id = ?",
+                "UPDATE tickets SET status = 'closed', closed_at = ? WHERE channel_id = ? AND status = 'open'",
                 [new Date().toISOString(), channel.id],
-                async (dbErr) => {
+                async function (dbErr) {
                     if (dbErr) {
                         console.error('Database error:', dbErr);
                         return reject(dbErr);
                     }
+                    // Another concurrent close already won the race — bail out.
+                    if (this.changes === 0) return resolve();
 
                     let transcript = "";
                     try {
-                        const messages = await channel.messages.fetch({ limit: 100 });
-                        const lines = [];
-                        messages.reverse().forEach(message => {
+                        const allMessages = [];
+                        let before;
+                        for (;;) {
+                            const batch = await channel.messages.fetch({ limit: 100, ...(before ? { before } : {}) });
+                            if (batch.size === 0) break;
+                            batch.forEach(m => allMessages.push(m));
+                            before = batch.last()?.id;
+                            if (batch.size < 100) break;
+                        }
+                        allMessages.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+                        const lines = allMessages.map(message => {
                             const attachments = message.attachments.size > 0
                                 ? ` [${message.attachments.size} attachment(s)]`
                                 : '';
-                            lines.push(`${message.author?.username ?? 'Unknown'} (${message.author?.id ?? 'N/A'}) - ${message.createdAt}: ${message.content}${attachments}`);
+                            return `${message.author?.username ?? 'Unknown'} (${message.author?.id ?? 'N/A'}) - ${message.createdAt}: ${message.content}${attachments}`;
                         });
                         transcript = lines.join('\n');
                     } catch (error) {
@@ -200,7 +210,7 @@ async function closeTicketChannel(channel, closer, bot) {
                             const files = [];
                             if (transcript.trim()) {
                                 files.push({
-                                    attachment: Buffer.from(transcript),
+                                    attachment: Buffer.from(transcript, 'utf-8'),
                                     name: `transcript-${ticket.id}.txt`
                                 });
                             }
@@ -226,7 +236,7 @@ async function closeTicketChannel(channel, closer, bot) {
                         const dmFiles = [];
                         if (transcript.trim()) {
                             dmFiles.push({
-                                attachment: Buffer.from(transcript),
+                                attachment: Buffer.from(transcript, 'utf-8'),
                                 name: `transcript-${ticket.id}.txt`
                             });
                         }

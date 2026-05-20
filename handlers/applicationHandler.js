@@ -27,6 +27,24 @@ async function safeReply(interaction, payload) {
     }
 }
 
+// Discord caps an embed at 6000 chars total and 1024 per field value. With up
+// to 12 answers, full-length answers blow past 6000 and make .send() throw —
+// which silently loses a submitted application. Keep each answer short in the
+// embed and surface the complete answers as an attached transcript instead.
+function truncateForEmbed(text, cap) {
+    const s = typeof text === 'string' ? text : String(text ?? '');
+    if (!s) return '—';
+    return s.length > cap ? s.slice(0, cap - 1) + '…' : s;
+}
+
+function buildAnswersTranscript(category, questions, answers) {
+    let out = `${category} Application\n${'='.repeat(40)}\n\n`;
+    answers.forEach((answer, i) => {
+        out += `Q${i + 1}: ${questions?.[i] ?? `Question ${i + 1}`}\n${answer || '(no answer)'}\n\n`;
+    });
+    return out;
+}
+
 class ApplicationHandler {
     constructor(bot) {
         this.bot = bot;
@@ -142,7 +160,9 @@ class ApplicationHandler {
                 return;
             }
 
-            await channel.bulkDelete(messages);
+            const TWO_WEEKS = Date.now() - 14 * 24 * 60 * 60 * 1000;
+            const deletable = messages.filter(m => m.createdTimestamp > TWO_WEEKS);
+            if (deletable.size > 0) await channel.bulkDelete(deletable);
         } catch (error) {
             console.error('Error clearing channel:', error);
             if (existingPanel) return; // edit failed — don't create a duplicate
@@ -261,6 +281,15 @@ class ApplicationHandler {
         const category = interaction.customId.replace('application_start_', '');
         const userId = interaction.user.id;
 
+        // A rapid second "Start Application" click (before the first click's
+        // interaction.update strips the button) would INSERT a second row and
+        // overwrite the session, orphaning the first application forever.
+        const existing = this.sessions.get(userId);
+        if (existing && existing.status === 'in_progress') {
+            await interaction.deferUpdate().catch(() => {});
+            return;
+        }
+
         const startedAt = new Date();
         const timeoutHours = this.bot.CONFIG.APPLICATION_TIMEOUT_HOURS ?? 3;
         const expiresAt = new Date(startedAt.getTime() + timeoutHours * 60 * 60 * 1000);
@@ -275,6 +304,9 @@ class ApplicationHandler {
             function (err) {
                 if (err) {
                     console.error('Error creating application:', err);
+                    // Clean up the confirmation session so the user isn't blocked
+                    // by "Application In Progress" on their next attempt.
+                    self.sessions.delete(userId);
                     interaction.update({ embeds: [
                         new EmbedBuilder()
                             .setTitle('Error')
@@ -378,7 +410,10 @@ class ApplicationHandler {
         const questions = this.questions[session.category];
         if (!questions || session.answers.length >= questions.length) return;
 
-        session.answers.push(message.content);
+        const trimmed = message.content.trim();
+        if (!trimmed) return;
+
+        session.answers.push(trimmed);
 
         this.bot.db.run(
             "UPDATE applications SET answers = ? WHERE id = ?",
@@ -404,10 +439,9 @@ class ApplicationHandler {
 
         answers.forEach((answer, index) => {
             const question = questions[index];
-            const truncatedAnswer = answer.length > 500 ? answer.substring(0, 497) + '...' : answer;
             embed.addFields({
-                name: `F${index + 1}: ${question}`,
-                value: truncatedAnswer,
+                name: truncateForEmbed(`F${index + 1}: ${question}`, 256),
+                value: truncateForEmbed(answer, 280),
                 inline: false
             });
         });
@@ -468,6 +502,8 @@ class ApplicationHandler {
 
         try {
             if (action === 'application_submit') {
+                // Acknowledge immediately — DB write + DM + review post can exceed the 3s window.
+                await interaction.deferUpdate();
                 await this.completeApplication(interaction, summarySession.applicationId);
             } else if (action === 'application_edit') {
                 await this.showEditModal(interaction, summarySession);
@@ -558,10 +594,9 @@ class ApplicationHandler {
 
         summarySession.answers.forEach((answer, index) => {
             const question = summarySession.questions[index];
-            const truncatedAnswer = answer.length > 500 ? answer.substring(0, 497) + '...' : answer;
             embed.addFields({
-                name: `F${index + 1}: ${question}`,
-                value: truncatedAnswer,
+                name: truncateForEmbed(`F${index + 1}: ${question}`, 256),
+                value: truncateForEmbed(answer, 280),
                 inline: false
             });
         });
@@ -595,11 +630,12 @@ class ApplicationHandler {
         } catch (error) {
             console.error('Error updating summary message:', error);
             try {
-                await interaction.user.send({
+                const newMsg = await interaction.user.send({
                     content: MSG.APPLICATION_UPDATED_FALLBACK,
                     embeds: [embed],
                     components: [row]
                 });
+                summarySession.messageId = newMsg.id;
             } catch (sendError) {
                 console.error('Could not send updated summary:', sendError);
             }
@@ -611,23 +647,31 @@ class ApplicationHandler {
         const session = this.sessions.get(userId);
 
         if (!session) {
-            if (!interaction.replied && !interaction.deferred) {
-                await interaction.reply({
-                    content: MSG.APPLICATION_SESSION_EXPIRED,
-                    flags: MessageFlags.Ephemeral
-                });
-            }
+            await safeReply(interaction, {
+                content: MSG.APPLICATION_SESSION_EXPIRED,
+                flags: MessageFlags.Ephemeral
+            });
             return;
         }
 
         const submittedAt = new Date();
+        const self = this;
 
         this.bot.db.run(
-            "UPDATE applications SET status = 'submitted', submitted_at = ? WHERE id = ?",
+            "UPDATE applications SET status = 'submitted', submitted_at = ? WHERE id = ? AND status = 'in_progress'",
             [submittedAt.toISOString(), applicationId],
-            (err) => { if (err) console.error('[completeApplication] DB update error:', err); }
+            function (err) {
+                if (err) console.error('[completeApplication] DB update error:', err);
+                if (this.changes === 0) {
+                    // Already submitted by a concurrent click — nothing to do.
+                    return;
+                }
+                self._finishCompleteApplication(interaction, userId, applicationId);
+            }
         );
+    }
 
+    async _finishCompleteApplication(interaction, userId, applicationId) {
         this.sessions.delete(userId);
         this.summarySessions.delete(userId);
 
@@ -689,13 +733,22 @@ class ApplicationHandler {
 
                     answers.forEach((answer, index) => {
                         const question = questions[index] ?? `Question ${index + 1}`;
-                        const truncatedAnswer = answer.length > 1024 ? answer.substring(0, 1020) + '...' : answer;
                         embed.addFields({
-                            name: `F${index + 1}: ${question}`,
-                            value: truncatedAnswer,
+                            name: truncateForEmbed(`F${index + 1}: ${question}`, 256),
+                            value: truncateForEmbed(answer, 300),
                             inline: false
                         });
                     });
+
+                    // Full, untruncated answers go in an attached transcript so
+                    // staff never lose content to the embed size cap.
+                    const transcriptFile = {
+                        attachment: Buffer.from(
+                            buildAnswersTranscript(application.category, questions, answers),
+                            'utf-8'
+                        ),
+                        name: `application-${application.id}.txt`
+                    };
 
                     const acceptButton = new ButtonBuilder()
                         .setCustomId(`application_accept_${application.id}`)
@@ -726,14 +779,15 @@ class ApplicationHandler {
                     const row2 = new ActionRowBuilder().addComponents(acceptWithReasonButton, denyWithReasonButton);
                     const row3 = new ActionRowBuilder().addComponents(ticketButton);
 
-                    const specificChannelId = this.bot.CONFIG.APPLICATION_CATEGORY_SPECIFIC[application.category];
+                    const specificChannelId = this.bot.CONFIG.APPLICATION_CATEGORY_SPECIFIC?.[application.category];
                     const reviewChannelId = specificChannelId || this.bot.CONFIG.APPLICATION_REVIEW_CHANNEL;
                     const reviewChannel = await fetchChannel(this.bot, reviewChannelId);
 
                     if (reviewChannel) {
                         await reviewChannel.send({
                             embeds: [embed],
-                            components: [row1, row2, row3]
+                            components: [row1, row2, row3],
+                            files: [transcriptFile]
                         });
                     } else {
                         console.error(`Review channel not found for category ${application.category} (ID: ${reviewChannelId})`);
@@ -781,13 +835,23 @@ class ApplicationHandler {
             return;
         }
 
+        // A modal must be the FIRST response to the interaction and shown within
+        // Discord's 3s window — opening it after a sqlite round-trip risks a
+        // 10062 that silently breaks the reason flow. Show it immediately;
+        // handleReasonModal re-validates the application when it is submitted.
+        if (action === 'accept_reason') {
+            await this.showReasonModal(interaction, 'accept', applicationId);
+            return;
+        }
+        if (action === 'deny_reason') {
+            await this.showReasonModal(interaction, 'deny', applicationId);
+            return;
+        }
+
         // accept/deny/ticket do slow work (member fetch, role add, DM, channel
         // create) before responding, which blows past Discord's 3s window and
-        // throws 10062. Acknowledge first. The *_reason actions must NOT defer —
-        // they open a modal, which has to be the initial interaction response.
-        if (action === 'accept' || action === 'deny' || action === 'ticket') {
-            await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-        }
+        // throws 10062. Acknowledge first.
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
         this.bot.db.get(
             "SELECT * FROM applications WHERE id = ?",
@@ -801,33 +865,45 @@ class ApplicationHandler {
                     return;
                 }
 
-                // Guard against double-processing: accept/deny actions only make
-                // sense on a submitted application. Without this check a second
-                // click would re-send a DM, re-assign roles, and log a duplicate
-                // promotion entry.
-                if (['accept', 'deny', 'accept_reason', 'deny_reason'].includes(action) &&
-                        application.status !== 'submitted') {
-                    await safeReply(interaction, {
-                        content: `This application has already been reviewed (status: **${application.status}**).`,
-                        flags: MessageFlags.Ephemeral
-                    });
-                    return;
-                }
-
                 try {
                     const user = await this.bot.client.users.fetch(application.user_id);
 
-                    if (action === 'accept') {
-                        await this.acceptApplication(interaction, application, user);
-                    } else if (action === 'deny') {
-                        await this.denyApplication(interaction, application, user);
-                    } else if (action === 'accept_reason') {
-                        await this.showReasonModal(interaction, 'accept', applicationId);
-                    } else if (action === 'deny_reason') {
-                        await this.showReasonModal(interaction, 'deny', applicationId);
-                    } else if (action === 'ticket') {
+                    if (action === 'ticket') {
                         await this.openApplicationTicket(interaction, application, user);
+                        return;
                     }
+
+                    // Atomically claim the application. Only the click that
+                    // actually transitions submitted → accepted/denied performs
+                    // the side-effects (role add, DM, promotion log), so a rapid
+                    // double-click can't promote or notify twice.
+                    const newStatus = action === 'accept' ? 'accepted' : 'denied';
+                    const self = this;
+                    this.bot.db.run(
+                        "UPDATE applications SET status = ?, reviewed_by = ? WHERE id = ? AND status = 'submitted'",
+                        [newStatus, interaction.user.id, application.id],
+                        function (uerr) {
+                            if (uerr) {
+                                console.error('[handleManagerAction] claim error:', uerr);
+                                safeReply(interaction, { content: MSG.GENERIC_ERROR, flags: MessageFlags.Ephemeral });
+                                return;
+                            }
+                            if (this.changes === 0) {
+                                safeReply(interaction, {
+                                    content: 'This application has already been reviewed.',
+                                    flags: MessageFlags.Ephemeral
+                                });
+                                return;
+                            }
+                            const work = action === 'accept'
+                                ? self.acceptApplication(interaction, application, user)
+                                : self.denyApplication(interaction, application, user);
+                            work.catch(e => {
+                                console.error('Error handling manager action:', e);
+                                safeReply(interaction, { content: MSG.GENERIC_ERROR, flags: MessageFlags.Ephemeral });
+                            });
+                        }
+                    );
                 } catch (error) {
                     console.error('Error handling manager action:', error);
                     await safeReply(interaction, {
@@ -860,6 +936,10 @@ class ApplicationHandler {
                     if (this.bot.STAFF_RANKS.includes(application.category)) {
                         rolesToAdd.push(this.bot.STAFF_ROLE);
                     }
+                    const allRankRoles = Object.values(this.bot.RANK_ROLES);
+                    const rolesToRemove = allRankRoles.filter(id => member.roles.cache.has(id));
+                    if (member.roles.cache.has(this.bot.STAFF_ROLE)) rolesToRemove.push(this.bot.STAFF_ROLE);
+                    if (rolesToRemove.length > 0) await member.roles.remove(rolesToRemove);
                     await member.roles.add(rolesToAdd);
                     console.log(`Roles assigned to ${user.tag} for ${application.category} application`);
                 } else {
@@ -879,12 +959,6 @@ class ApplicationHandler {
             } catch (error) {
                 console.log(`Could not send acceptance DM to ${user.tag}`);
             }
-
-            this.bot.db.run(
-                "UPDATE applications SET status = 'accepted', reviewed_by = ? WHERE id = ?",
-                [interaction.user.id, application.id],
-                (err) => { if (err) console.error('[acceptApplication] DB update error:', err); }
-            );
 
             await this.logApplicationAction(application.id, 'accepted', interaction.user.id);
 
@@ -927,12 +1001,6 @@ class ApplicationHandler {
             } catch (error) {
                 console.log(`Could not send denial DM to ${user.tag}`);
             }
-
-            this.bot.db.run(
-                "UPDATE applications SET status = 'denied', reviewed_by = ? WHERE id = ?",
-                [interaction.user.id, application.id],
-                (err) => { if (err) console.error('[denyApplication] DB update error:', err); }
-            );
 
             await this.logApplicationAction(application.id, 'denied', interaction.user.id);
 
@@ -1004,22 +1072,37 @@ class ApplicationHandler {
                     return;
                 }
 
-                if (application.status !== 'submitted') {
-                    await safeReply(interaction, {
-                        content: `This application has already been reviewed (status: **${application.status}**).`,
-                        flags: MessageFlags.Ephemeral
-                    });
-                    return;
-                }
-
                 try {
                     const user = await this.bot.client.users.fetch(application.user_id);
 
-                    if (action === 'accept') {
-                        await this.acceptApplicationWithReason(interaction, application, user, reason);
-                    } else {
-                        await this.denyApplicationWithReason(interaction, application, user, reason);
-                    }
+                    // Atomically claim so a double submission can't double-process.
+                    const newStatus = action === 'accept' ? 'accepted' : 'denied';
+                    const self = this;
+                    this.bot.db.run(
+                        "UPDATE applications SET status = ?, reviewed_by = ?, review_reason = ? WHERE id = ? AND status = 'submitted'",
+                        [newStatus, interaction.user.id, reason, application.id],
+                        function (uerr) {
+                            if (uerr) {
+                                console.error('[handleReasonModal] claim error:', uerr);
+                                safeReply(interaction, { content: MSG.GENERIC_ERROR, flags: MessageFlags.Ephemeral });
+                                return;
+                            }
+                            if (this.changes === 0) {
+                                safeReply(interaction, {
+                                    content: 'This application has already been reviewed.',
+                                    flags: MessageFlags.Ephemeral
+                                });
+                                return;
+                            }
+                            const work = action === 'accept'
+                                ? self.acceptApplicationWithReason(interaction, application, user, reason)
+                                : self.denyApplicationWithReason(interaction, application, user, reason);
+                            work.catch(e => {
+                                console.error('Error handling reason modal:', e);
+                                safeReply(interaction, { content: MSG.GENERIC_ERROR, flags: MessageFlags.Ephemeral });
+                            });
+                        }
+                    );
                 } catch (error) {
                     console.error('Error handling reason modal:', error);
                     await safeReply(interaction, {
@@ -1052,6 +1135,10 @@ class ApplicationHandler {
                     if (this.bot.STAFF_RANKS.includes(application.category)) {
                         rolesToAdd.push(this.bot.STAFF_ROLE);
                     }
+                    const allRankRoles = Object.values(this.bot.RANK_ROLES);
+                    const rolesToRemove = allRankRoles.filter(id => member.roles.cache.has(id));
+                    if (member.roles.cache.has(this.bot.STAFF_ROLE)) rolesToRemove.push(this.bot.STAFF_ROLE);
+                    if (rolesToRemove.length > 0) await member.roles.remove(rolesToRemove);
                     await member.roles.add(rolesToAdd);
                     console.log(`Roles assigned to ${user.tag} for ${application.category} application (with reason)`);
                 } else {
@@ -1071,12 +1158,6 @@ class ApplicationHandler {
             } catch (error) {
                 console.log(`Could not send acceptance DM to ${user.tag}`);
             }
-
-            this.bot.db.run(
-                "UPDATE applications SET status = 'accepted', reviewed_by = ?, review_reason = ? WHERE id = ?",
-                [interaction.user.id, reason, application.id],
-                (err) => { if (err) console.error('[acceptApplicationWithReason] DB update error:', err); }
-            );
 
             await this.logApplicationAction(application.id, 'accepted_with_reason', interaction.user.id, reason);
 
@@ -1120,12 +1201,6 @@ class ApplicationHandler {
                 console.log(`Could not send denial DM to ${user.tag}`);
             }
 
-            this.bot.db.run(
-                "UPDATE applications SET status = 'denied', reviewed_by = ?, review_reason = ? WHERE id = ?",
-                [interaction.user.id, reason, application.id],
-                (err) => { if (err) console.error('[denyApplicationWithReason] DB update error:', err); }
-            );
-
             await this.logApplicationAction(application.id, 'denied_with_reason', interaction.user.id, reason);
 
             await this.updateApplicationEmbed(interaction, application, 'denied', reason);
@@ -1144,6 +1219,23 @@ class ApplicationHandler {
     }
 
     async openApplicationTicket(interaction, application, user) {
+        // Prevent duplicate tickets for the same user/application
+        const existingTicket = await new Promise((resolve) => {
+            this.bot.db.get(
+                "SELECT * FROM tickets WHERE user_id = ? AND category = 'application' AND status = 'open'",
+                [user.id],
+                (err, row) => resolve(err ? null : row)
+            );
+        });
+
+        if (existingTicket) {
+            await safeReply(interaction, {
+                content: `An application ticket already exists for this user: <#${existingTicket.channel_id}>`,
+                flags: MessageFlags.Ephemeral
+            });
+            return;
+        }
+
         const categoryChannel = await fetchChannel(this.bot, this.bot.CONFIG.SUPPORT_CATEGORY);
         const guild = interaction.guild;
 

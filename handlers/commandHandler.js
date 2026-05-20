@@ -163,7 +163,8 @@ module.exports = {
                                 name: 'reason',
                                 type: ApplicationCommandOptionType.String,
                                 description: 'Reason for the ban',
-                                required: false
+                                required: false,
+                                max_length: 512
                             },
                             {
                                 name: 'duration',
@@ -181,7 +182,8 @@ module.exports = {
                                 name: 'proof',
                                 type: ApplicationCommandOptionType.String,
                                 description: 'Proof URL (optional)',
-                                required: false
+                                required: false,
+                                max_length: 1024
                             }
                         ]
                     },
@@ -200,7 +202,8 @@ module.exports = {
                                 name: 'reason',
                                 type: ApplicationCommandOptionType.String,
                                 description: 'Reason for unbanning',
-                                required: false
+                                required: false,
+                                max_length: 512
                             }
                         ]
                     },
@@ -219,13 +222,15 @@ module.exports = {
                                 name: 'reason',
                                 type: ApplicationCommandOptionType.String,
                                 description: 'Reason for the kick',
-                                required: false
+                                required: false,
+                                max_length: 512
                             },
                             {
                                 name: 'proof',
                                 type: ApplicationCommandOptionType.String,
                                 description: 'Proof URL (optional)',
-                                required: false
+                                required: false,
+                                max_length: 1024
                             }
                         ]
                     },
@@ -244,7 +249,8 @@ module.exports = {
                                 name: 'reason',
                                 type: ApplicationCommandOptionType.String,
                                 description: 'Reason for the mute',
-                                required: false
+                                required: false,
+                                max_length: 512
                             },
                             {
                                 name: 'duration',
@@ -256,7 +262,8 @@ module.exports = {
                                 name: 'proof',
                                 type: ApplicationCommandOptionType.String,
                                 description: 'Proof URL (optional)',
-                                required: false
+                                required: false,
+                                max_length: 1024
                             }
                         ]
                     },
@@ -275,7 +282,8 @@ module.exports = {
                                 name: 'reason',
                                 type: ApplicationCommandOptionType.String,
                                 description: 'Reason for unmuting',
-                                required: false
+                                required: false,
+                                max_length: 512
                             }
                         ]
                     }
@@ -644,7 +652,7 @@ async function handleCloseRequest(interaction, channel, bot) {
 
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-    bot.db.get("SELECT * FROM tickets WHERE channel_id = ?", [channel.id], async (err, ticket) => {
+    bot.db.get("SELECT * FROM tickets WHERE channel_id = ? AND status = 'open'", [channel.id], async (err, ticket) => {
         if (err || !ticket) {
             const embed = new EmbedBuilder()
                 .setTitle("Error")
@@ -691,7 +699,7 @@ async function handleCloseRequest(interaction, channel, bot) {
 async function handleTicketCloseCommand(interaction, channel, bot) {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-    bot.db.get("SELECT * FROM tickets WHERE channel_id = ?", [channel.id], async (err, ticket) => {
+    bot.db.get("SELECT * FROM tickets WHERE channel_id = ? AND status = 'open'", [channel.id], async (err, ticket) => {
         if (err) {
             await interaction.editReply({ content: MSG.GENERIC_ERROR });
             return;
@@ -714,10 +722,13 @@ async function handleTicketCloseCommand(interaction, channel, bot) {
 
         try {
             await closeTicketChannel(channel, interaction.user, bot);
-            await interaction.editReply({ content: MSG.TICKET_CLOSED(channel) });
+            // When the command is run inside the ticket itself, the channel
+            // (and the ephemeral reply that lived in it) is now gone, so
+            // editing the reply 404s — that's expected, not an error.
+            await interaction.editReply({ content: MSG.TICKET_CLOSED(channel) }).catch(() => {});
         } catch (error) {
             console.error('Error closing ticket:', error);
-            await interaction.editReply({ content: MSG.GENERIC_ERROR });
+            await interaction.editReply({ content: MSG.GENERIC_ERROR }).catch(() => {});
         }
     });
 }
@@ -1066,6 +1077,19 @@ async function handleBan(interaction, options, bot) {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     try {
+        // Prevent acting on members who outrank the executor
+        try {
+            const targetMember = await interaction.guild.members.fetch(user.id);
+            if (targetMember.roles.highest.position >= interaction.member.roles.highest.position) {
+                const embed = new EmbedBuilder()
+                    .setTitle("Permission Denied")
+                    .setDescription("You cannot ban a member with an equal or higher role than yours.")
+                    .setColor(0xff0000);
+                await interaction.editReply({ embeds: [embed] });
+                return;
+            }
+        } catch { /* user not in guild — ban proceeds */ }
+
         let expiresAt = null;
         let durationText = duration;
 
@@ -1088,25 +1112,24 @@ async function handleBan(interaction, options, bot) {
             banOptions.deleteMessageSeconds = 7 * 24 * 60 * 60; // 7 days in seconds
         }
 
-        const dmEmbed = new EmbedBuilder()
-            .setTitle(MSG.BAN_DM_TITLE)
-            .setColor(0xff0000)
-            .setDescription(MSG.BAN_DM_BODY(interaction.guild.name))
-            .addFields(
-                { name: "Reason", value: reason, inline: true },
-                { name: "Duration", value: durationText, inline: true },
-                { name: "Moderator", value: interaction.user.displayName, inline: true }
-            )
-            .setTimestamp();
+        await interaction.guild.members.ban(user, banOptions);
 
         try {
+            const dmEmbed = new EmbedBuilder()
+                .setTitle(MSG.BAN_DM_TITLE)
+                .setColor(0xff0000)
+                .setDescription(MSG.BAN_DM_BODY(interaction.guild.name))
+                .addFields(
+                    { name: "Reason", value: reason, inline: true },
+                    { name: "Duration", value: durationText, inline: true },
+                    { name: "Moderator", value: interaction.user.displayName, inline: true }
+                )
+                .setTimestamp();
             await user.send({ embeds: [dmEmbed] });
             console.log(`DM sent to ${user.username} about ban`);
         } catch (error) {
             console.log(`Could not send DM to ${user.username}, they might have DMs disabled`);
         }
-
-        await interaction.guild.members.ban(user, banOptions);
 
         bot.db.run(
             "INSERT INTO punishments (user_id, type, reason, duration, punished_by, expires_at) VALUES (?, ?, ?, ?, ?, ?)",
@@ -1131,7 +1154,8 @@ async function handleBan(interaction, options, bot) {
                 );
 
             if (proof) {
-                logEmbed.addFields({ name: 'Proof', value: proof, inline: false });
+                const proofTrunc = proof.length > 1024 ? proof.slice(0, 1021) + '...' : proof;
+                logEmbed.addFields({ name: 'Proof', value: proofTrunc, inline: false });
             }
 
             await logChannel.send({ embeds: [logEmbed] });
@@ -1141,9 +1165,10 @@ async function handleBan(interaction, options, bot) {
             .setTitle("User Banned")
             .setDescription(MSG.BAN_SUCCESS_BODY(user, reason, durationText, delmessages))
             .setColor(0x00ff00);
-        
+
         if (proof) {
-            embed.addFields({ name: "Proof", value: proof, inline: true });
+            const proofTrunc = proof.length > 1024 ? proof.slice(0, 1021) + '...' : proof;
+            embed.addFields({ name: "Proof", value: proofTrunc, inline: true });
         }
 
         await interaction.editReply({ embeds: [embed] });
@@ -1174,26 +1199,11 @@ async function handleUnban(interaction, options, bot) {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     try {
-        const user = await bot.client.users.fetch(userId);
-
+        // Unban first — the user's account may be deleted, which would make
+        // client.users.fetch() fail with 10013 and prevent the unban entirely
+        // if we fetched first. Do the Discord action, then optionally enrich
+        // the log/DM with user details if the account still exists.
         await interaction.guild.members.unban(userId, `${reason} | By: ${interaction.user.username}`);
-
-        const dmEmbed = new EmbedBuilder()
-            .setTitle(MSG.UNBAN_DM_TITLE)
-            .setColor(0x00ff00)
-            .setDescription(MSG.UNBAN_DM_BODY(interaction.guild.name))
-            .addFields(
-                { name: "Reason", value: reason, inline: true },
-                { name: "Moderator", value: interaction.user.displayName, inline: true }
-            )
-            .setTimestamp();
-
-        try {
-            await user.send({ embeds: [dmEmbed] });
-            console.log(`DM sent to ${user.username} about unban`);
-        } catch (error) {
-            console.log(`Could not send DM to ${user.username}, they might have DMs disabled or cannot be found`);
-        }
 
         bot.db.run(
             "UPDATE punishments SET active = FALSE WHERE user_id = ? AND type = 'ban' AND active = TRUE",
@@ -1201,26 +1211,54 @@ async function handleUnban(interaction, options, bot) {
             (err) => { if (err) console.error('[handleUnban] DB update error:', err); }
         );
 
+        // Try to resolve the user object for richer log/DM output; gracefully
+        // degrade if the account was deleted or is otherwise unfetchable.
+        let user = null;
+        try {
+            user = await bot.client.users.fetch(userId);
+        } catch {
+            console.log(`[handleUnban] Could not fetch user ${userId} (account may be deleted)`);
+        }
+
+        if (user) {
+            try {
+                const dmEmbed = new EmbedBuilder()
+                    .setTitle(MSG.UNBAN_DM_TITLE)
+                    .setColor(0x00ff00)
+                    .setDescription(MSG.UNBAN_DM_BODY(interaction.guild.name))
+                    .addFields(
+                        { name: "Reason", value: reason, inline: true },
+                        { name: "Moderator", value: interaction.user.displayName, inline: true }
+                    )
+                    .setTimestamp();
+                await user.send({ embeds: [dmEmbed] });
+                console.log(`DM sent to ${user.username} about unban`);
+            } catch {
+                console.log(`Could not send DM to ${userId}, they might have DMs disabled`);
+            }
+        }
+
         const logChannel = await fetchChannel(bot, bot.CONFIG.LOG_CHANNEL);
         if (logChannel) {
             const logEmbed = new EmbedBuilder()
                 .setTitle(MSG.UNBAN_LOG_TITLE)
                 .setColor(0x00cc44)
-                .setThumbnail(user.displayAvatarURL({ dynamic: true }))
                 .setTimestamp()
                 .addFields(
-                    { name: 'User',            value: `${user.tag}\n\`${userId}\``,                          inline: true },
-                    { name: 'Moderator',      value: `${interaction.user} (${interaction.user.tag})`,       inline: true },
-                    { name: 'Account Created', value: `<t:${Math.floor(user.createdTimestamp / 1000)}:F>`,   inline: true },
-                    { name: 'Reason',          value: reason,                                                inline: false }
+                    { name: 'User',       value: user ? `${user.tag}\n\`${userId}\`` : `\`${userId}\``,                  inline: true },
+                    { name: 'Moderator', value: `${interaction.user} (${interaction.user.tag})`,                          inline: true },
+                    { name: 'Reason',     value: reason,                                                                   inline: false }
                 );
-
+            if (user) {
+                logEmbed.setThumbnail(user.displayAvatarURL({ dynamic: true }));
+                logEmbed.addFields({ name: 'Account Created', value: `<t:${Math.floor(user.createdTimestamp / 1000)}:F>`, inline: true });
+            }
             await logChannel.send({ embeds: [logEmbed] });
         }
 
         const embed = new EmbedBuilder()
             .setTitle("User Unbanned")
-            .setDescription(MSG.UNBAN_SUCCESS_BODY(user.username, reason))
+            .setDescription(MSG.UNBAN_SUCCESS_BODY(user?.username ?? userId, reason))
             .setColor(0x00ff00);
         await interaction.editReply({ embeds: [embed] });
 
@@ -1271,27 +1309,47 @@ async function handleKick(interaction, options, bot) {
 
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
+    let kickMember;
     try {
-        const member = await interaction.guild.members.fetch(user.id);
+        kickMember = await interaction.guild.members.fetch(user.id);
+    } catch {
+        const embed = new EmbedBuilder()
+            .setTitle("Error")
+            .setDescription("That user is not in this server.")
+            .setColor(0xff0000);
+        await interaction.editReply({ embeds: [embed] });
+        return;
+    }
 
-        const dmEmbed = new EmbedBuilder()
-            .setTitle(MSG.KICK_DM_TITLE)
-            .setColor(0xffa500)
-            .setDescription(MSG.KICK_DM_BODY(interaction.guild.name))
-            .addFields(
-                { name: "Reason", value: reason, inline: true },
-                { name: "Moderator", value: interaction.user.displayName, inline: true }
-            )
-            .setTimestamp();
+    try {
+        const member = kickMember;
+
+        if (member.roles.highest.position >= interaction.member.roles.highest.position) {
+            const embed = new EmbedBuilder()
+                .setTitle("Permission Denied")
+                .setDescription("You cannot kick a member with an equal or higher role than yours.")
+                .setColor(0xff0000);
+            await interaction.editReply({ embeds: [embed] });
+            return;
+        }
+
+        await member.kick(`${reason} | By: ${interaction.user.username}`);
 
         try {
+            const dmEmbed = new EmbedBuilder()
+                .setTitle(MSG.KICK_DM_TITLE)
+                .setColor(0xffa500)
+                .setDescription(MSG.KICK_DM_BODY(interaction.guild.name))
+                .addFields(
+                    { name: "Reason", value: reason, inline: true },
+                    { name: "Moderator", value: interaction.user.displayName, inline: true }
+                )
+                .setTimestamp();
             await user.send({ embeds: [dmEmbed] });
             console.log(`DM sent to ${user.username} about kick`);
         } catch (error) {
             console.log(`Could not send DM to ${user.username}, they might have DMs disabled`);
         }
-
-        await member.kick(`${reason} | By: ${interaction.user.username}`);
 
 
         bot.db.run(
@@ -1315,7 +1373,8 @@ async function handleKick(interaction, options, bot) {
                 );
 
             if (proof) {
-                logEmbed.addFields({ name: 'Proof', value: proof, inline: false });
+                const proofTrunc = proof.length > 1024 ? proof.slice(0, 1021) + '...' : proof;
+                logEmbed.addFields({ name: 'Proof', value: proofTrunc, inline: false });
             }
 
             await logChannel.send({ embeds: [logEmbed] });
@@ -1325,9 +1384,10 @@ async function handleKick(interaction, options, bot) {
             .setTitle("User Kicked")
             .setDescription(MSG.KICK_SUCCESS_BODY(user, reason))
             .setColor(0x00ff00);
-        
+
         if (proof) {
-            embed.addFields({ name: "Proof", value: proof, inline: true });
+            const proofTrunc = proof.length > 1024 ? proof.slice(0, 1021) + '...' : proof;
+            embed.addFields({ name: "Proof", value: proofTrunc, inline: true });
         }
 
         await interaction.editReply({ embeds: [embed] });
@@ -1380,6 +1440,15 @@ async function handleMute(interaction, options, bot) {
     try {
         const member = await interaction.guild.members.fetch(user.id);
 
+        if (member.roles.highest.position >= interaction.member.roles.highest.position) {
+            const embed = new EmbedBuilder()
+                .setTitle("Permission Denied")
+                .setDescription("You cannot mute a member with an equal or higher role than yours.")
+                .setColor(0xff0000);
+            await interaction.editReply({ embeds: [embed] });
+            return;
+        }
+
         let timeoutDuration = null;
         let durationText = duration;
 
@@ -1411,25 +1480,24 @@ async function handleMute(interaction, options, bot) {
             durationText = 'permanent (28 days maximum)';
         }
 
-        const dmEmbed = new EmbedBuilder()
-            .setTitle(MSG.MUTE_DM_TITLE)
-            .setColor(0x808080)
-            .setDescription(MSG.MUTE_DM_BODY(interaction.guild.name))
-            .addFields(
-                { name: "Reason", value: reason, inline: true },
-                { name: "Duration", value: durationText, inline: true },
-                { name: "Moderator", value: interaction.user.displayName, inline: true }
-            )
-            .setTimestamp();
+        await member.timeout(timeoutDuration, `${reason} | By: ${interaction.user.username}`);
 
         try {
+            const dmEmbed = new EmbedBuilder()
+                .setTitle(MSG.MUTE_DM_TITLE)
+                .setColor(0x808080)
+                .setDescription(MSG.MUTE_DM_BODY(interaction.guild.name))
+                .addFields(
+                    { name: "Reason", value: reason, inline: true },
+                    { name: "Duration", value: durationText, inline: true },
+                    { name: "Moderator", value: interaction.user.displayName, inline: true }
+                )
+                .setTimestamp();
             await user.send({ embeds: [dmEmbed] });
             console.log(`DM sent to ${user.username} about mute`);
         } catch (error) {
             console.log(`Could not send DM to ${user.username}, they might have DMs disabled`);
         }
-
-        await member.timeout(timeoutDuration, `${reason} | By: ${interaction.user.username}`);
 
         let expiresAt = null;
         if (timeoutDuration) {
@@ -1458,7 +1526,8 @@ async function handleMute(interaction, options, bot) {
                 );
 
             if (proof) {
-                logEmbed.addFields({ name: 'Proof', value: proof, inline: false });
+                const proofTrunc = proof.length > 1024 ? proof.slice(0, 1021) + '...' : proof;
+                logEmbed.addFields({ name: 'Proof', value: proofTrunc, inline: false });
             }
 
             await logChannel.send({ embeds: [logEmbed] });
@@ -1468,9 +1537,10 @@ async function handleMute(interaction, options, bot) {
             .setTitle("User Muted")
             .setDescription(MSG.MUTE_SUCCESS_BODY(user, reason, durationText))
             .setColor(0x00ff00);
-        
+
         if (proof) {
-            embed.addFields({ name: "Proof", value: proof, inline: true });
+            const proofTrunc = proof.length > 1024 ? proof.slice(0, 1021) + '...' : proof;
+            embed.addFields({ name: "Proof", value: proofTrunc, inline: true });
         }
 
         await interaction.editReply({ embeds: [embed] });
@@ -1500,8 +1570,20 @@ async function handleUnmute(interaction, options, bot) {
 
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
+    let unmuteMember;
     try {
-        const member = await interaction.guild.members.fetch(user.id);
+        unmuteMember = await interaction.guild.members.fetch(user.id);
+    } catch {
+        const embed = new EmbedBuilder()
+            .setTitle("Error")
+            .setDescription("That user is not in this server.")
+            .setColor(0xff0000);
+        await interaction.editReply({ embeds: [embed] });
+        return;
+    }
+
+    try {
+        const member = unmuteMember;
 
         if (!member.isCommunicationDisabled()) {
             const embed = new EmbedBuilder()
@@ -1800,15 +1882,6 @@ async function handleClearCommand(interaction, options, bot) {
         return;
     }
 
-    if (amount < 0 || amount > 100) {
-        const embed = new EmbedBuilder()
-            .setTitle("Invalid Amount")
-            .setDescription("Enter a number between 1–100, or 0 to clear everything.")
-            .setColor(0xff0000);
-        await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
-        return;
-    }
-
     // Bulk-deleting up to 100 messages (or looping for amount=0) can easily take
     // longer than Discord's 3s interaction window, so acknowledge first.
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
@@ -1927,7 +2000,7 @@ async function handleReportCommand(interaction, options, bot) {
         const cancelButton = new ButtonBuilder()
             .setCustomId(`report_cancel_${user.id}_${interaction.user.id}`)
             .setLabel('Cancel')
-            .setStyle(ButtonStyle.Primary);
+            .setStyle(ButtonStyle.Secondary);
 
         const banButton = new ButtonBuilder()
             .setCustomId(`report_ban_${user.id}_${interaction.user.id}`)

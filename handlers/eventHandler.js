@@ -53,7 +53,9 @@ async function setupTicketChannel(bot) {
             return;
         }
 
-        await channel.bulkDelete(messages);
+        const TWO_WEEKS = Date.now() - 14 * 24 * 60 * 60 * 1000;
+        const deletable = messages.filter(m => m.createdTimestamp > TWO_WEEKS);
+        if (deletable.size > 0) await channel.bulkDelete(deletable);
     } catch (error) {
         console.error('Error clearing channel:', error);
         if (existingPanel) return; // edit failed — don't create a duplicate
@@ -67,7 +69,7 @@ async function setupTicketChannel(bot) {
 async function handleCloseTicket(interaction, bot) {
     await interaction.deferUpdate();
 
-    bot.db.get("SELECT category FROM tickets WHERE channel_id = ?", [interaction.channel.id], async (err, ticket) => {
+    bot.db.get("SELECT category FROM tickets WHERE channel_id = ? AND status = 'open'", [interaction.channel.id], async (err, ticket) => {
         if (err) {
             await interaction.followUp({ content: MSG.GENERIC_ERROR, flags: MessageFlags.Ephemeral }).catch(() => {});
             return;
@@ -874,7 +876,7 @@ async function logUserUpdate(oldUser, newUser, bot) {
 async function handleCloseRequestConfirm(interaction, bot) {
     await interaction.deferUpdate();
 
-    bot.db.get("SELECT * FROM tickets WHERE channel_id = ?", [interaction.channel.id], async (err, ticket) => {
+    bot.db.get("SELECT * FROM tickets WHERE channel_id = ? AND status = 'open'", [interaction.channel.id], async (err, ticket) => {
         if (err || !ticket) {
             await interaction.followUp({ content: MSG.TICKET_NOT_FOUND, flags: MessageFlags.Ephemeral }).catch(() => {});
             return;
@@ -902,12 +904,29 @@ async function handleCloseRequestConfirm(interaction, bot) {
 async function handleCloseRequestCancel(interaction, bot) {
     await interaction.deferUpdate();
 
-    const embed = new EmbedBuilder()
-        .setTitle(MSG.TICKET_CLOSE_REQUEST_CANCELLED_TITLE)
-        .setDescription(MSG.TICKET_CLOSE_REQUEST_CANCELLED_BODY)
-        .setColor(0xff0000);
+    bot.db.get("SELECT * FROM tickets WHERE channel_id = ?", [interaction.channel.id], async (err, ticket) => {
+        if (err || !ticket) {
+            await interaction.followUp({ content: MSG.TICKET_NOT_FOUND, flags: MessageFlags.Ephemeral }).catch(() => {});
+            return;
+        }
 
-    await interaction.editReply({ embeds: [embed], components: [] });
+        const categoryConfig = bot.CONFIG.CATEGORY_PERMISSIONS[ticket.category];
+        const isStaff = categoryConfig
+            ? interaction.member.roles.cache.some(r => categoryConfig.staff_roles.includes(r.id))
+            : interaction.member.roles.cache.has(bot.MANAGEMENT_ROLE);
+
+        if (interaction.user.id !== ticket.user_id && !isStaff) {
+            await interaction.followUp({ content: MSG.NO_PERMISSION_STAFF, flags: MessageFlags.Ephemeral }).catch(() => {});
+            return;
+        }
+
+        const embed = new EmbedBuilder()
+            .setTitle(MSG.TICKET_CLOSE_REQUEST_CANCELLED_TITLE)
+            .setDescription(MSG.TICKET_CLOSE_REQUEST_CANCELLED_BODY)
+            .setColor(0xff0000);
+
+        await interaction.editReply({ embeds: [embed], components: [] });
+    });
 }
 
 // ── Report Button Handler ──────────────────────────────────────────────────────
@@ -941,10 +960,8 @@ async function handleReportButton(interaction, bot) {
         const member = await guild.members.fetch(reportedUserId).catch(() => null);
 
         if (action === 'ban') {
-            if (!member) {
-                await interaction.followUp({ content: 'This user is no longer on the server.', flags: MessageFlags.Ephemeral });
-                return;
-            }
+            // A ban must work even if the reported user already left — that is
+            // precisely when a ban matters. guild.bans.create takes a raw ID.
             try {
                 await guild.bans.create(reportedUserId, { reason: `Banned via report by ${interaction.user.tag}`, deleteMessageSeconds: 0 });
             } catch (e) {
@@ -1477,8 +1494,8 @@ async function logReactionRemove(reaction, user, bot) {
 // ── Message Create log ────────────────────────────────────────────────────────
 
 async function logMessageCreate(message, bot) {
-    // Never log the bot's own messages — would create an infinite logging loop
-    if (message.author.id === bot.client.user.id) return;
+    // Never log bot messages or webhook messages (includes the bot's own embeds)
+    if (!message.author || message.author.bot) return;
 
     // Don't log activity inside the log channels themselves — that's just the
     // bot's own audit output and (on a busy server) needless rate-limit load.
@@ -1554,7 +1571,7 @@ async function logReactionRemoveAll(message, reactions, bot) {
 
 async function logReactionRemoveEmoji(reaction, bot) {
     if (reaction.message.partial) {
-        try { await reaction.message.fetch(); } catch { return; }
+        try { reaction.message = await reaction.message.fetch(); } catch { return; }
     }
 
     const emoji = reaction.emoji.id
@@ -1846,9 +1863,13 @@ function registerEventHandlers(bot) {
         await bot.applicationHandler.setupApplicationPanel();
         
         setInterval(() => bot.applicationHandler.checkSessions(), 60 * 1000);
-        
-        
-        
+
+        await sweepExpiredPunishments(bot);
+        setInterval(() => {
+            sweepExpiredPunishments(bot).catch(err =>
+                console.error('[sweepExpiredPunishments] error:', err));
+        }, 60 * 1000);
+
         console.log('All systems initialized successfully');
 
         // Verify all log channels are accessible
@@ -1910,10 +1931,8 @@ function registerEventHandlers(bot) {
         // Manager actions
         if (interaction.isButton()) {
             const customId = interaction.customId;
-            if (customId.startsWith('application_accept_') || 
+            if (customId.startsWith('application_accept_') ||
                 customId.startsWith('application_deny_') ||
-                customId.startsWith('application_accept_reason_') ||
-                customId.startsWith('application_deny_reason_') ||
                 customId.startsWith('application_ticket_')) {
                 await bot.applicationHandler.handleManagerAction(interaction);
             }
@@ -2051,47 +2070,36 @@ function registerEventHandlers(bot) {
     });
 
     bot.client.on('guildMemberUpdate', async (oldMember, newMember) => {
-        // Check for timeout (mute)
-        if (!oldMember.isCommunicationDisabled() && newMember.isCommunicationDisabled()) {
+        // Timeout add/remove. A MemberUpdate audit entry also covers nickname
+        // changes, so entries.first() can be unrelated — match on target, a
+        // recent timestamp, and the communication_disabled_until change key.
+        // A natural timeout expiry has no audit entry, so nothing is logged
+        // (instead of a bogus "Manual" unmute with an Unknown moderator).
+        const timeoutAdded   = !oldMember.isCommunicationDisabled() && newMember.isCommunicationDisabled();
+        const timeoutRemoved =  oldMember.isCommunicationDisabled() && !newMember.isCommunicationDisabled();
+        if (timeoutAdded || timeoutRemoved) {
             try {
                 const auditLogs = await newMember.guild.fetchAuditLogs({
                     type: AuditLogEvent.MemberUpdate,
-                    limit: 1
+                    limit: 5
                 });
 
-                const muteLog = auditLogs.entries.first();
-                if (muteLog && muteLog.target.id === newMember.id && muteLog.executor?.id !== bot.client.user.id) {
+                const entry = auditLogs.entries.find(e =>
+                    e.target?.id === newMember.id &&
+                    Date.now() - e.createdTimestamp < 5000 &&
+                    e.changes?.some(c => c.key === 'communication_disabled_until')
+                );
+
+                if (entry && entry.executor?.id !== bot.client.user.id) {
                     await logManualModeration({
                         guild: newMember.guild,
                         user: newMember.user,
-                        executor: muteLog.executor,
-                        reason: muteLog.reason || 'No reason provided'
-                    }, 'mute', bot);
+                        executor: entry.executor,
+                        reason: entry.reason || 'No reason provided'
+                    }, timeoutAdded ? 'mute' : 'unmute', bot);
                 }
             } catch (error) {
-                console.error('Error checking mute audit log:', error);
-            }
-        }
-        
-        // Check for timeout removal (unmute)
-        if (oldMember.isCommunicationDisabled() && !newMember.isCommunicationDisabled()) {
-            try {
-                const auditLogs = await newMember.guild.fetchAuditLogs({
-                    type: AuditLogEvent.MemberUpdate,
-                    limit: 1
-                });
-
-                const unmuteLog = auditLogs.entries.first();
-                if (unmuteLog && unmuteLog.target.id === newMember.id && unmuteLog.executor?.id !== bot.client.user.id) {
-                    await logManualModeration({
-                        guild: newMember.guild,
-                        user: newMember.user,
-                        executor: unmuteLog.executor,
-                        reason: unmuteLog.reason || 'No reason provided'
-                    }, 'unmute', bot);
-                }
-            } catch (error) {
-                console.error('Error checking unmute audit log:', error);
+                console.error('Error checking timeout audit log:', error);
             }
         }
 
@@ -2459,6 +2467,74 @@ async function logManualModeration(data, action, bot) {
     }
 
     await logChannel.send({ embeds: [embed] });
+}
+
+// /moderate ban accepts a duration and stores expires_at, but nothing ever
+// lifted the ban — temp bans were effectively permanent. This sweep lifts
+// expired bans and marks expired ban/mute rows inactive so `active` (which the
+// mute flow and /about rely on) stays truthful. Discord auto-removes timeouts,
+// so expired mutes only need the DB flag cleared.
+async function sweepExpiredPunishments(bot) {
+    const nowIso = new Date().toISOString();
+
+    bot.db.run(
+        "UPDATE punishments SET active = FALSE WHERE type = 'mute' AND active = TRUE AND expires_at IS NOT NULL AND expires_at <= ?",
+        [nowIso],
+        (err) => { if (err) console.error('[sweepExpiredPunishments] mute cleanup error:', err); }
+    );
+
+    bot.db.all(
+        "SELECT id, user_id FROM punishments WHERE type = 'ban' AND active = TRUE AND expires_at IS NOT NULL AND expires_at <= ?",
+        [nowIso],
+        async (err, rows) => {
+            if (err) {
+                console.error('[sweepExpiredPunishments] ban query error:', err);
+                return;
+            }
+            if (!rows || rows.length === 0) return;
+
+            const guild = bot.client.guilds.cache.get(bot.CONFIG.GUILD_ID);
+            if (!guild) return;
+
+            const logChannel = await getLogChannel(bot, bot.CONFIG.LOG_CHANNEL);
+
+            for (const row of rows) {
+                let lifted = false;
+                try {
+                    await guild.bans.remove(row.user_id, 'Temporary ban expired');
+                    lifted = true;
+                } catch (e) {
+                    // 10026 = Unknown Ban: already unbanned, so still resolved.
+                    if (e?.code === 10026) {
+                        lifted = true;
+                    } else {
+                        console.error(`[sweepExpiredPunishments] could not unban ${row.user_id}:`, e?.message || e);
+                    }
+                }
+
+                if (!lifted) continue; // leave active so a later sweep retries
+
+                bot.db.run(
+                    "UPDATE punishments SET active = FALSE WHERE id = ?",
+                    [row.id],
+                    (uErr) => { if (uErr) console.error('[sweepExpiredPunishments] deactivate error:', uErr); }
+                );
+
+                if (logChannel) {
+                    const embed = new EmbedBuilder()
+                        .setTitle('Temporary Ban Expired')
+                        .setColor(0x00cc44)
+                        .setTimestamp()
+                        .addFields(
+                            { name: 'User',   value: `<@${row.user_id}>\n\`${row.user_id}\``, inline: true },
+                            { name: 'Action', value: 'Automatically unbanned',                inline: true }
+                        )
+                        .setFooter({ text: 'Automatic action' });
+                    await logChannel.send({ embeds: [embed] }).catch(() => {});
+                }
+            }
+        }
+    );
 }
 
 module.exports = { registerEventHandlers };
