@@ -124,11 +124,14 @@
             "Partner":     ["Creator", "Media", "Famous", "Partner"],
             "Builder":     ["Builder"],
             "Helper":      ["Helper"],
-            "Developer":         ["Developer"],
+            "Mod":         ["Mod"],
+            "SrMod":       ["SrMod"],
+            "Admin":       ["Admin"],
+            "Developer":   ["Developer"],
             "Beta-Tester": ["Beta-Tester"]
         },
 
-        "STAFF_RANKS": ["Helper", "Mod", "SrMod", "Admin", "Developer", "Owner"]
+        "STAFF_RANKS": ["Helper", "Mod", "SrMod", "Admin", "Developer"]
     },
 
     "CATEGORY_PERMISSIONS": {

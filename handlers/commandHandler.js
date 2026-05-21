@@ -294,7 +294,7 @@ module.exports = {
     description: 'Promote a user to a specific rank',
     options: [
         {
-            name: 'discordname',
+            name: 'user',
             type: ApplicationCommandOptionType.User,
             description: 'The Discord user to promote',
             required: true
@@ -430,22 +430,8 @@ module.exports = {
                 description: 'Lock the channel for everyone except admins'
             },
             {
-                name: 'unlock', 
-                description: 'Unlock the channel and restore previous permissions'
-            },
-            {
-                name: 'slowdown',
-                description: 'Set channel cooldown (0 to reset)',
-                options: [
-                    {
-                        name: 'seconds',
-                        type: ApplicationCommandOptionType.Integer,
-                        description: 'Cooldown in seconds (0-21600)',
-                        required: true,
-                        min_value: 0,
-                        max_value: 21600
-                    }
-                ]
+                name: 'unlock',
+                description: 'Unlock the channel (resets @everyone SendMessages/AddReactions to inherited)'
             },
             {
                 name: 'massrole',
@@ -583,9 +569,6 @@ module.exports = {
             case 'unlock':
                 await handleUnlockCommand(interaction, bot);
                 break;
-            case 'slowdown':
-                await handleSlowdownCommand(interaction, options, bot);
-                break;
             case 'massrole':
                 await handleMassRole(interaction, options, bot);
                 break;
@@ -595,6 +578,9 @@ module.exports = {
             case 'hoster':
                 await handleHosterCommand(interaction);
                 break;
+            default:
+                console.warn(`[handleCommand] Unhandled slash command: ${commandName}`);
+                await interaction.reply({ content: 'Unknown command.', flags: MessageFlags.Ephemeral }).catch(() => {});
         }
     }
 };
@@ -637,6 +623,9 @@ async function handleTicketsCommand(interaction, options, bot) {
         case 'slowdown':
             await handleSlowdownCommand(interaction, options, bot);
             break;
+        default:
+            console.warn(`[handleTicketsCommand] Unhandled subcommand: ${subcommand}`);
+            await interaction.reply({ content: 'Unknown subcommand.', flags: MessageFlags.Ephemeral }).catch(() => {});
     }
 }
 
@@ -697,6 +686,11 @@ async function handleCloseRequest(interaction, channel, bot) {
 }
 
 async function handleTicketCloseCommand(interaction, channel, bot) {
+    if (!interaction.member.roles.cache.has(bot.STAFF_ROLE)) {
+        await interaction.reply({ content: MSG.NO_PERMISSION_STAFF, flags: MessageFlags.Ephemeral });
+        return;
+    }
+
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     bot.db.get("SELECT * FROM tickets WHERE channel_id = ? AND status = 'open'", [channel.id], async (err, ticket) => {
@@ -747,7 +741,7 @@ async function handleTicketAdd(interaction, options, bot) {
 
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-    bot.db.get("SELECT * FROM tickets WHERE channel_id = ?", [interaction.channel.id], async (err, ticket) => {
+    bot.db.get("SELECT * FROM tickets WHERE channel_id = ? AND status = 'open'", [interaction.channel.id], async (err, ticket) => {
         if (err || !ticket) {
             const embed = new EmbedBuilder()
                 .setTitle("Error")
@@ -794,7 +788,7 @@ async function handleTicketRemove(interaction, options, bot) {
 
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-    bot.db.get("SELECT * FROM tickets WHERE channel_id = ?", [interaction.channel.id], async (err, ticket) => {
+    bot.db.get("SELECT * FROM tickets WHERE channel_id = ? AND status = 'open'", [interaction.channel.id], async (err, ticket) => {
         if (err || !ticket) {
             const embed = new EmbedBuilder()
                 .setTitle("Error")
@@ -1037,6 +1031,9 @@ async function handleModerateCommand(interaction, options, bot) {
         case 'unmute':
             await handleUnmute(interaction, options, bot);
             break;
+        default:
+            console.warn(`[handleModerateCommand] Unhandled subcommand: ${subcommand}`);
+            await interaction.reply({ content: 'Unknown subcommand.', flags: MessageFlags.Ephemeral }).catch(() => {});
     }
 }
 
@@ -1145,8 +1142,8 @@ async function handleBan(interaction, options, bot) {
                 .setThumbnail(user.displayAvatarURL({ dynamic: true }))
                 .setTimestamp()
                 .addFields(
-                    { name: 'User',            value: `${user} (${user.tag})\n\`${user.id}\``,                                   inline: true },
-                    { name: 'Moderator',      value: `${interaction.user} (${interaction.user.tag})`,                           inline: true },
+                    { name: 'User',            value: `${user} (${user.username})\n\`${user.id}\``,                                   inline: true },
+                    { name: 'Moderator',      value: `${interaction.user} (${interaction.user.username})`,                           inline: true },
                     { name: 'Account Created', value: `<t:${Math.floor(user.createdTimestamp / 1000)}:F>`,                       inline: true },
                     { name: 'Reason',          value: reason,                                                                    inline: false },
                     { name: 'Duration',        value: durationText,                                                              inline: true },
@@ -1245,8 +1242,8 @@ async function handleUnban(interaction, options, bot) {
                 .setColor(0x00cc44)
                 .setTimestamp()
                 .addFields(
-                    { name: 'User',       value: user ? `${user.tag}\n\`${userId}\`` : `\`${userId}\``,                  inline: true },
-                    { name: 'Moderator', value: `${interaction.user} (${interaction.user.tag})`,                          inline: true },
+                    { name: 'User',       value: user ? `${user.username}\n\`${userId}\`` : `\`${userId}\``,                  inline: true },
+                    { name: 'Moderator', value: `${interaction.user} (${interaction.user.username})`,                          inline: true },
                     { name: 'Reason',     value: reason,                                                                   inline: false }
                 );
             if (user) {
@@ -1366,8 +1363,8 @@ async function handleKick(interaction, options, bot) {
                 .setThumbnail(user.displayAvatarURL({ dynamic: true }))
                 .setTimestamp()
                 .addFields(
-                    { name: 'User',            value: `${user} (${user.tag})\n\`${user.id}\``,                                   inline: true },
-                    { name: 'Moderator',      value: `${interaction.user} (${interaction.user.tag})`,                           inline: true },
+                    { name: 'User',            value: `${user} (${user.username})\n\`${user.id}\``,                                   inline: true },
+                    { name: 'Moderator',      value: `${interaction.user} (${interaction.user.username})`,                           inline: true },
                     { name: 'Account Created', value: `<t:${Math.floor(user.createdTimestamp / 1000)}:F>`,                       inline: true },
                     { name: 'Reason',          value: reason,                                                                    inline: false }
                 );
@@ -1518,8 +1515,8 @@ async function handleMute(interaction, options, bot) {
                 .setThumbnail(user.displayAvatarURL({ dynamic: true }))
                 .setTimestamp()
                 .addFields(
-                    { name: 'User',            value: `${user} (${user.tag})\n\`${user.id}\``,                                   inline: true },
-                    { name: 'Moderator',      value: `${interaction.user} (${interaction.user.tag})`,                           inline: true },
+                    { name: 'User',            value: `${user} (${user.username})\n\`${user.id}\``,                                   inline: true },
+                    { name: 'Moderator',      value: `${interaction.user} (${interaction.user.username})`,                           inline: true },
                     { name: 'Account Created', value: `<t:${Math.floor(user.createdTimestamp / 1000)}:F>`,                       inline: true },
                     { name: 'Reason',          value: reason,                                                                    inline: false },
                     { name: 'Duration',        value: durationText,                                                              inline: true }
@@ -1627,8 +1624,8 @@ async function handleUnmute(interaction, options, bot) {
                 .setThumbnail(user.displayAvatarURL({ dynamic: true }))
                 .setTimestamp()
                 .addFields(
-                    { name: 'User',            value: `${user} (${user.tag})\n\`${user.id}\``,                                   inline: true },
-                    { name: 'Moderator',      value: `${interaction.user} (${interaction.user.tag})`,                           inline: true },
+                    { name: 'User',            value: `${user} (${user.username})\n\`${user.id}\``,                                   inline: true },
+                    { name: 'Moderator',      value: `${interaction.user} (${interaction.user.username})`,                           inline: true },
                     { name: 'Account Created', value: `<t:${Math.floor(user.createdTimestamp / 1000)}:F>`,                       inline: true },
                     { name: 'Reason',          value: reason,                                                                    inline: false }
                 );
@@ -1664,7 +1661,7 @@ async function handlePromote(interaction, options, bot) {
 
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-    const user = options.getUser('discordname');
+    const user = options.getUser('user');
     const rank = options.getString('rank');
 
     try {
@@ -1810,6 +1807,24 @@ async function handleDemote(interaction, options, bot) {
                 const embed = new EmbedBuilder()
                     .setTitle("Error")
                     .setDescription(`Role with ID ${newRoleId} not found in guild.`)
+                    .setColor(0xff0000);
+                await interaction.editReply({ embeds: [embed] });
+                return;
+            }
+
+            // Ensure the target rank is actually lower than the member's current rank.
+            // Without this check, /demote could be used to "demote" someone to a
+            // higher-positioned role, effectively promoting them.
+            const memberHighestRankPos = Math.max(
+                -1,
+                ...Object.values(bot.RANK_ROLES)
+                    .filter(id => member.roles.cache.has(id))
+                    .map(id => interaction.guild.roles.cache.get(id)?.position ?? -1)
+            );
+            if (memberHighestRankPos >= 0 && newRole.position >= memberHighestRankPos) {
+                const embed = new EmbedBuilder()
+                    .setTitle("Invalid Demotion")
+                    .setDescription(`**${rank}** is not below the user's current rank. Use \`/promote\` to move a user to a higher rank.`)
                     .setColor(0xff0000);
                 await interaction.editReply({ embeds: [embed] });
                 return;
@@ -1990,8 +2005,8 @@ async function handleReportCommand(interaction, options, bot) {
             .setColor(0xff0000)
             .setTimestamp()
             .addFields(
-                { name: "Reported User", value: `${user} (${user.tag})`, inline: true },
-                { name: "Reported By", value: `${interaction.user} (${interaction.user.tag})`, inline: true },
+                { name: "Reported User", value: `${user} (${user.username})`, inline: true },
+                { name: "Reported By", value: `${interaction.user} (${interaction.user.username})`, inline: true },
                 { name: "Proof", value: proofValue, inline: false }
             )
             .setThumbnail(user.displayAvatarURL({ dynamic: true }))
@@ -2020,7 +2035,7 @@ async function handleReportCommand(interaction, options, bot) {
 
             const successEmbed = new EmbedBuilder()
                 .setTitle("Report Submitted")
-                .setDescription(`Your report against ${user.tag} has been submitted to the staff team.`)
+                .setDescription(`Your report against ${user.username} has been submitted to the staff team.`)
                 .setColor(0x00ff00);
             await interaction.editReply({ embeds: [successEmbed] });
         } catch (error) {
@@ -2141,21 +2156,23 @@ async function handleReportUnban(interaction, options, bot) {
 }
 
 async function handleProofCommand(interaction, options, bot) {
-    if (!interaction.member.roles.cache.has(bot.STAFF_ROLE)) {
+    if (!interaction.member.roles.cache.has(bot.MANAGEMENT_ROLE)) {
         const embed = new EmbedBuilder()
             .setTitle("Permission Denied")
-            .setDescription(MSG.NO_PERMISSION_STAFF)
+            .setDescription(MSG.NO_PERMISSION_MANAGE)
             .setColor(0xff0000);
         await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
         return;
     }
+
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     const messageId = options.getString('message_id');
     const proofUrl = options.getString('proof_url');
 
     const logChannel = await fetchChannel(bot, bot.CONFIG.LOG_CHANNEL);
     if (!logChannel) {
-        await interaction.reply({ content: MSG.GENERIC_ERROR, flags: MessageFlags.Ephemeral });
+        await interaction.editReply({ content: MSG.GENERIC_ERROR });
         return;
     }
 
@@ -2164,12 +2181,12 @@ async function handleProofCommand(interaction, options, bot) {
         const embed = message.embeds[0];
 
         if (!embed) {
-            await interaction.reply({ content: "No embed found for that message ID.", flags: MessageFlags.Ephemeral });
+            await interaction.editReply({ content: "No embed found for that message ID." });
             return;
         }
 
         if (embed.fields?.some(f => f.name === 'Proof')) {
-            await interaction.reply({ content: "This log entry already has a proof URL.", flags: MessageFlags.Ephemeral });
+            await interaction.editReply({ content: "This log entry already has a proof URL." });
             return;
         }
 
@@ -2178,10 +2195,10 @@ async function handleProofCommand(interaction, options, bot) {
             .addFields({ name: "Proof", value: safeProofUrl, inline: true });
 
         await message.edit({ embeds: [newEmbed] });
-        await interaction.reply({ content: "Proof added.", flags: MessageFlags.Ephemeral });
+        await interaction.editReply({ content: "Proof added." });
     } catch (error) {
         console.error('Error adding proof:', error);
-        await interaction.reply({ content: "Couldn't find that message. Double-check the message ID.", flags: MessageFlags.Ephemeral });
+        await interaction.editReply({ content: "Couldn't find that message. Double-check the message ID." });
     }
 }
 
@@ -2222,7 +2239,7 @@ async function handleLockCommand(interaction, bot) {
                 .setTimestamp()
                 .addFields(
                     { name: "Channel", value: `${channel} (${channel.name})`, inline: true },
-                    { name: "Locked by", value: `${interaction.user} (${interaction.user.tag})`, inline: true },
+                    { name: "Locked by", value: `${interaction.user} (${interaction.user.username})`, inline: true },
                     { name: "Channel ID", value: channel.id, inline: true }
                 );
 
@@ -2269,7 +2286,7 @@ async function handleUnlockCommand(interaction, bot) {
 
         const embed = new EmbedBuilder()
             .setTitle("Channel Unlocked")
-            .setDescription("Channel is unlocked. Previous permissions restored.")
+            .setDescription("Channel is unlocked. @everyone SendMessages and AddReactions have been reset to inherited (default).")
             .setColor(0x00ff00)
             .setTimestamp();
 
@@ -2284,7 +2301,7 @@ async function handleUnlockCommand(interaction, bot) {
                 .setTimestamp()
                 .addFields(
                     { name: "Channel", value: `${channel} (${channel.name})`, inline: true },
-                    { name: "Unlocked by", value: `${interaction.user} (${interaction.user.tag})`, inline: true },
+                    { name: "Unlocked by", value: `${interaction.user} (${interaction.user.username})`, inline: true },
                     { name: "Channel ID", value: channel.id, inline: true }
                 );
 
@@ -2319,24 +2336,25 @@ async function handleSlowdownCommand(interaction, options, bot) {
 
     try {
         await interaction.channel.setRateLimitPerUser(seconds);
-
-        const embed = new EmbedBuilder()
-            .setTitle("Channel Cooldown Updated")
-            .setDescription(seconds === 0
-                ? "Channel cooldown has been reset."
-                : `Channel cooldown set to ${seconds} seconds.`
-            )
-            .setColor(0x00ff00);
-
-        await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
     } catch (error) {
         console.error('Error setting channel cooldown:', error);
-        const embed = new EmbedBuilder()
+        const errEmbed = new EmbedBuilder()
             .setTitle("Error")
             .setDescription(MSG.GENERIC_ERROR)
             .setColor(0xff0000);
-        await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+        await interaction.reply({ embeds: [errEmbed], flags: MessageFlags.Ephemeral }).catch(() => {});
+        return;
     }
+
+    const embed = new EmbedBuilder()
+        .setTitle("Channel Cooldown Updated")
+        .setDescription(seconds === 0
+            ? "Channel cooldown has been reset."
+            : `Channel cooldown set to ${seconds} seconds.`
+        )
+        .setColor(0x00ff00);
+
+    await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral }).catch(() => {});
 }
 
 async function handleMassRole(interaction, options, bot) {
@@ -2398,21 +2416,33 @@ async function handleMassRole(interaction, options, bot) {
             }
         }
 
-        await interaction.editReply({ embeds: [
-            new EmbedBuilder()
-                .setTitle("Mass Role Complete")
-                .setDescription(`**Action:** ${action === 'add' ? 'Added' : 'Removed'} ${role}\n**Success:** ${success}\n**Failed:** ${failed}`)
-                .setColor(0x00ff00)
-        ] });
+        const doneEmbed = new EmbedBuilder()
+            .setTitle("Mass Role Complete")
+            .setDescription(`**Action:** ${action === 'add' ? 'Added' : 'Removed'} ${role}\n**Success:** ${success}\n**Failed:** ${failed}`)
+            .setColor(0x00ff00);
+        try {
+            await interaction.editReply({ embeds: [doneEmbed] });
+        } catch (editErr) {
+            // Interaction token expired after >15 min (large server) — post to channel instead.
+            if (editErr?.code === 10062) {
+                doneEmbed.setDescription(doneEmbed.data.description + '\n\n*(Interaction timed out — result posted here instead.)*');
+                await interaction.channel.send({ embeds: [doneEmbed] }).catch(() => {});
+            }
+        }
 
     } catch (error) {
         console.error('Error in mass role:', error);
-        await interaction.editReply({ embeds: [
-            new EmbedBuilder()
-                .setTitle("Error")
-                .setDescription(MSG.GENERIC_ERROR)
-                .setColor(0xff0000)
-        ] });
+        const errEmbed = new EmbedBuilder()
+            .setTitle("Error")
+            .setDescription(MSG.GENERIC_ERROR)
+            .setColor(0xff0000);
+        try {
+            await interaction.editReply({ embeds: [errEmbed] });
+        } catch (editErr) {
+            if (editErr?.code === 10062) {
+                await interaction.channel.send({ embeds: [errEmbed] }).catch(() => {});
+            }
+        }
     }
 }
 
@@ -2436,11 +2466,10 @@ async function handleEmbedCommand(interaction, options, bot) {
 
     let color = 0x5865F2;
     if (colorInput) {
-        const hex = colorInput.replace('#', '');
-        const parsed = parseInt(hex, 16);
-        // Must be a valid 24-bit color; out-of-range makes setColor throw a
-        // RangeError outside the try/catch below.
-        if (!isNaN(parsed) && parsed >= 0 && parsed <= 0xffffff) color = parsed;
+        const hex = colorInput.replace(/^#/, '');
+        if (/^[0-9a-fA-F]{6}$/.test(hex)) {
+            color = parseInt(hex, 16);
+        }
     }
 
     const embed = new EmbedBuilder()
@@ -2448,11 +2477,14 @@ async function handleEmbedCommand(interaction, options, bot) {
         .setDescription(text)
         .setColor(color);
 
+    const urlWarnings = [];
     if (thumbnail) {
-        try { embed.setThumbnail(thumbnail); } catch {}
+        try { embed.setThumbnail(thumbnail); }
+        catch { urlWarnings.push('thumbnail URL was invalid and was not applied'); }
     }
     if (image) {
-        try { embed.setImage(image); } catch {}
+        try { embed.setImage(image); }
+        catch { urlWarnings.push('image URL was invalid and was not applied'); }
     }
     if (footer) {
         embed.setFooter({ text: footer });
@@ -2460,11 +2492,14 @@ async function handleEmbedCommand(interaction, options, bot) {
 
     try {
         await targetChannel.send({ embeds: [embed] });
+        const sentDescription = urlWarnings.length
+            ? `Embed was sent to ${targetChannel}.\n⚠️ Warning: ${urlWarnings.join('; ')}.`
+            : `Embed was sent to ${targetChannel}.`;
         await interaction.reply({ embeds: [
             new EmbedBuilder()
                 .setTitle("Embed Sent")
-                .setDescription(`Embed was sent to ${targetChannel}.`)
-                .setColor(0x00ff00)
+                .setDescription(sentDescription)
+                .setColor(urlWarnings.length ? 0xffcc00 : 0x00ff00)
         ], flags: MessageFlags.Ephemeral });
     } catch (error) {
         console.error('Error sending embed:', error);

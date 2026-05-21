@@ -170,5 +170,20 @@ process.on('unhandledRejection', (reason, promise) => {
     console.error('Unhandled rejection:', promise, 'reason:', reason);
 });
 
+function gracefulShutdown(signal) {
+    console.log(`Received ${signal}. Closing database and exiting…`);
+    if (bot?.db) {
+        bot.db.close((err) => {
+            if (err) console.error('Error closing database:', err);
+            process.exit(0);
+        });
+    } else {
+        process.exit(0);
+    }
+}
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT',  () => gracefulShutdown('SIGINT'));
+
 const bot = new TicketBot();
 bot.login();

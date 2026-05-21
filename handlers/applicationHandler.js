@@ -147,7 +147,7 @@ class ApplicationHandler {
 
         let existingPanel = null;
         try {
-            const messages = await channel.messages.fetch({ limit: 10 });
+            const messages = await channel.messages.fetch({ limit: 50 });
             existingPanel = messages.find(msg =>
                 msg.author.id === this.bot.client.user.id &&
                 msg.embeds.length > 0 &&
@@ -284,11 +284,14 @@ class ApplicationHandler {
         // A rapid second "Start Application" click (before the first click's
         // interaction.update strips the button) would INSERT a second row and
         // overwrite the session, orphaning the first application forever.
+        // Set a synchronous 'starting' sentinel BEFORE any async work so a
+        // concurrent click sees it and bails immediately.
         const existing = this.sessions.get(userId);
-        if (existing && existing.status === 'in_progress') {
+        if (existing && (existing.status === 'in_progress' || existing.status === 'starting')) {
             await interaction.deferUpdate().catch(() => {});
             return;
         }
+        this.sessions.set(userId, { status: 'starting', category, createdAt: new Date() });
 
         const startedAt = new Date();
         const timeoutHours = this.bot.CONFIG.APPLICATION_TIMEOUT_HOURS ?? 3;
@@ -297,7 +300,7 @@ class ApplicationHandler {
         const self = this;
         this.bot.db.run(
             "INSERT INTO applications (user_id, username, category, answers, status, started_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            [userId, interaction.user.tag, category, JSON.stringify([]), 'in_progress', startedAt.toISOString(), expiresAt.toISOString()],
+            [userId, interaction.user.username, category, JSON.stringify([]), 'in_progress', startedAt.toISOString(), expiresAt.toISOString()],
             // Non-arrow so `this` is the sqlite statement; `this.lastID` is the
             // row id of THIS insert. A separate "SELECT last_insert_rowid()" is
             // connection-global and races with any concurrent INSERT.
@@ -338,7 +341,11 @@ class ApplicationHandler {
                         await interaction.update({ embeds: [embed], components: [] });
                     } catch (error) {
                         console.error('Error updating interaction:', error);
-                        await interaction.user.send({ embeds: [embed] });
+                        try {
+                            await interaction.user.send({ embeds: [embed] });
+                        } catch (sendError) {
+                            console.error('Could not send application start message via DM:', sendError.message);
+                        }
                     }
 
                     await self.askQuestion(interaction.user, applicationId, 0);
@@ -440,7 +447,7 @@ class ApplicationHandler {
         answers.forEach((answer, index) => {
             const question = questions[index];
             embed.addFields({
-                name: truncateForEmbed(`F${index + 1}: ${question}`, 256),
+                name: truncateForEmbed(`Q${index + 1}: ${question}`, 256),
                 value: truncateForEmbed(answer, 280),
                 inline: false
             });
@@ -595,7 +602,7 @@ class ApplicationHandler {
         summarySession.answers.forEach((answer, index) => {
             const question = summarySession.questions[index];
             embed.addFields({
-                name: truncateForEmbed(`F${index + 1}: ${question}`, 256),
+                name: truncateForEmbed(`Q${index + 1}: ${question}`, 256),
                 value: truncateForEmbed(answer, 280),
                 inline: false
             });
@@ -666,7 +673,11 @@ class ApplicationHandler {
                     // Already submitted by a concurrent click — nothing to do.
                     return;
                 }
-                self._finishCompleteApplication(interaction, userId, applicationId);
+                self._finishCompleteApplication(interaction, userId, applicationId)
+                    .catch(e => {
+                        console.error('[completeApplication] _finishCompleteApplication error:', e);
+                        safeReply(interaction, { content: MSG.GENERIC_ERROR, flags: MessageFlags.Ephemeral });
+                    });
             }
         );
     }
@@ -715,7 +726,7 @@ class ApplicationHandler {
                     }
 
                     const embed = new EmbedBuilder()
-                        .setTitle(`${application.category} Application — ${user.tag}`)
+                        .setTitle(`${application.category} Application — ${user.username}`)
                         .setColor(0x0000ff)
                         .setThumbnail(user.displayAvatarURL())
                         .setFooter({ text: `User ID: ${user.id} | Application ID: ${application.id}` });
@@ -731,13 +742,18 @@ class ApplicationHandler {
                         }
                     }
 
+                    // Stay under Discord's 6000-character embed total. Track running
+                    // usage and stop adding fields if we'd overflow.
+                    let embedChars = (embed.data.title?.length ?? 0) + (embed.data.footer?.text?.length ?? 0);
+                    const EMBED_CHAR_LIMIT = 5800; // leave headroom
+
                     answers.forEach((answer, index) => {
                         const question = questions[index] ?? `Question ${index + 1}`;
-                        embed.addFields({
-                            name: truncateForEmbed(`F${index + 1}: ${question}`, 256),
-                            value: truncateForEmbed(answer, 300),
-                            inline: false
-                        });
+                        const name  = truncateForEmbed(`Q${index + 1}: ${question}`, 256);
+                        const value = truncateForEmbed(answer, 300);
+                        if (embedChars + name.length + value.length > EMBED_CHAR_LIMIT) return;
+                        embed.addFields({ name, value, inline: false });
+                        embedChars += name.length + value.length;
                     });
 
                     // Full, untruncated answers go in an attached transcript so
@@ -941,12 +957,12 @@ class ApplicationHandler {
                     if (member.roles.cache.has(this.bot.STAFF_ROLE)) rolesToRemove.push(this.bot.STAFF_ROLE);
                     if (rolesToRemove.length > 0) await member.roles.remove(rolesToRemove);
                     await member.roles.add(rolesToAdd);
-                    console.log(`Roles assigned to ${user.tag} for ${application.category} application`);
+                    console.log(`Roles assigned to ${user.username} for ${application.category} application`);
                 } else {
                     console.warn(`No role found for category: ${application.category}`);
                 }
             } catch (memberError) {
-                console.log(`Could not assign role to ${user.tag}:`, memberError.message);
+                console.log(`Could not assign role to ${user.username}:`, memberError.message);
             }
 
             const embed = new EmbedBuilder()
@@ -957,7 +973,7 @@ class ApplicationHandler {
             try {
                 await user.send({ embeds: [embed] });
             } catch (error) {
-                console.log(`Could not send acceptance DM to ${user.tag}`);
+                console.log(`Could not send acceptance DM to ${user.username}`);
             }
 
             await this.logApplicationAction(application.id, 'accepted', interaction.user.id);
@@ -977,7 +993,7 @@ class ApplicationHandler {
             await this.updateApplicationEmbed(interaction, application, 'accepted');
 
             await safeReply(interaction, {
-                content: MSG.APPLICATION_ACCEPT_STAFF_CONFIRM(user.tag),
+                content: MSG.APPLICATION_ACCEPT_STAFF_CONFIRM(user.username),
                 flags: MessageFlags.Ephemeral
             });
         } catch (error) {
@@ -999,7 +1015,7 @@ class ApplicationHandler {
             try {
                 await user.send({ embeds: [embed] });
             } catch (error) {
-                console.log(`Could not send denial DM to ${user.tag}`);
+                console.log(`Could not send denial DM to ${user.username}`);
             }
 
             await this.logApplicationAction(application.id, 'denied', interaction.user.id);
@@ -1007,7 +1023,7 @@ class ApplicationHandler {
             await this.updateApplicationEmbed(interaction, application, 'denied');
 
             await safeReply(interaction, {
-                content: MSG.APPLICATION_DENY_STAFF_CONFIRM(user.tag),
+                content: MSG.APPLICATION_DENY_STAFF_CONFIRM(user.username),
                 flags: MessageFlags.Ephemeral
             });
         } catch (error) {
@@ -1140,12 +1156,12 @@ class ApplicationHandler {
                     if (member.roles.cache.has(this.bot.STAFF_ROLE)) rolesToRemove.push(this.bot.STAFF_ROLE);
                     if (rolesToRemove.length > 0) await member.roles.remove(rolesToRemove);
                     await member.roles.add(rolesToAdd);
-                    console.log(`Roles assigned to ${user.tag} for ${application.category} application (with reason)`);
+                    console.log(`Roles assigned to ${user.username} for ${application.category} application (with reason)`);
                 } else {
                     console.warn(`No role found for category: ${application.category}`);
                 }
             } catch (memberError) {
-                console.log(`Could not assign role to ${user.tag}:`, memberError.message);
+                console.log(`Could not assign role to ${user.username}:`, memberError.message);
             }
 
             const embed = new EmbedBuilder()
@@ -1156,7 +1172,7 @@ class ApplicationHandler {
             try {
                 await user.send({ embeds: [embed] });
             } catch (error) {
-                console.log(`Could not send acceptance DM to ${user.tag}`);
+                console.log(`Could not send acceptance DM to ${user.username}`);
             }
 
             await this.logApplicationAction(application.id, 'accepted_with_reason', interaction.user.id, reason);
@@ -1176,7 +1192,7 @@ class ApplicationHandler {
             await this.updateApplicationEmbed(interaction, application, 'accepted', reason);
 
             await safeReply(interaction, {
-                content: MSG.APPLICATION_ACCEPT_STAFF_CONFIRM(user.tag),
+                content: MSG.APPLICATION_ACCEPT_STAFF_CONFIRM(user.username),
                 flags: MessageFlags.Ephemeral
             });
         } catch (error) {
@@ -1198,7 +1214,7 @@ class ApplicationHandler {
             try {
                 await user.send({ embeds: [embed] });
             } catch (error) {
-                console.log(`Could not send denial DM to ${user.tag}`);
+                console.log(`Could not send denial DM to ${user.username}`);
             }
 
             await this.logApplicationAction(application.id, 'denied_with_reason', interaction.user.id, reason);
@@ -1206,7 +1222,7 @@ class ApplicationHandler {
             await this.updateApplicationEmbed(interaction, application, 'denied', reason);
 
             await safeReply(interaction, {
-                content: MSG.APPLICATION_DENY_STAFF_CONFIRM(user.tag),
+                content: MSG.APPLICATION_DENY_STAFF_CONFIRM(user.username),
                 flags: MessageFlags.Ephemeral
             });
         } catch (error) {
@@ -1272,7 +1288,7 @@ class ApplicationHandler {
 
             const embed = new EmbedBuilder()
                 .setTitle(`Application Follow-up — ${application.category}`)
-                .setDescription(`This ticket was opened to discuss ${user}'s **${application.category}** application.\n\n**User:** ${user.tag}\n**Application ID:** ${application.id}`)
+                .setDescription(`This ticket was opened to discuss ${user}'s **${application.category}** application.\n\n**User:** ${user.username}\n**Application ID:** ${application.id}`)
                 .setColor(0x0000ff);
 
             const closeButton = new ButtonBuilder()
@@ -1495,7 +1511,7 @@ class ApplicationHandler {
             if (interaction.user) {
                 newEmbed.addFields({
                     name: 'Decided by',
-                    value: `${interaction.user.tag} (${interaction.user.id})`,
+                    value: `${interaction.user.username} (${interaction.user.id})`,
                     inline: true
                 });
             }

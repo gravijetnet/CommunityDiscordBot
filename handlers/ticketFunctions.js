@@ -1,6 +1,11 @@
 const { ChannelType, PermissionsBitField, EmbedBuilder, ButtonBuilder, ButtonStyle, ActionRowBuilder, MessageFlags } = require('discord.js');
 const MSG = require('../config/messages');
 
+// Per-user in-progress lock for ticket creation — prevents a race where two
+// simultaneous select-menu clicks both pass the open_count > 0 guard before
+// either INSERT has committed (B-12).
+const creatingTickets = new Set();
+
 async function fetchChannel(bot, channelId) {
     if (!channelId) return null;
     try {
@@ -32,6 +37,18 @@ async function createTicket(interaction, category, bot) {
     // interaction window — acknowledge immediately so reply() can't 10062.
     await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
 
+    // In-process lock so two simultaneous select-menu clicks from the same user
+    // can't both pass the open_count check before either INSERT commits.
+    if (creatingTickets.has(interaction.user.id)) {
+        const embed = new EmbedBuilder()
+            .setTitle("Ticket Already Open")
+            .setDescription("You already have an open ticket. Please use it or ask staff to close it before opening a new one.")
+            .setColor(0xff0000);
+        await safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
+        return;
+    }
+    creatingTickets.add(interaction.user.id);
+
     return new Promise((resolve) => {
         bot.db.get("SELECT * FROM ticket_bans WHERE user_id = ?", [interaction.user.id], async (err, ban) => {
             if (err) {
@@ -40,6 +57,7 @@ async function createTicket(interaction, category, bot) {
             }
 
             if (ban) {
+                creatingTickets.delete(interaction.user.id);
                 const embed = new EmbedBuilder()
                     .setTitle("Ticket Blocked")
                     .setDescription(MSG.TICKET_BANNED)
@@ -53,11 +71,13 @@ async function createTicket(interaction, category, bot) {
                 [interaction.user.id],
                 async (err, row) => {
                     if (err) {
+                        creatingTickets.delete(interaction.user.id);
                         await safeReply(interaction, { content: MSG.GENERIC_DB_ERROR, flags: MessageFlags.Ephemeral });
                         return resolve();
                     }
 
                     if ((row?.open_count ?? 0) > 0) {
+                        creatingTickets.delete(interaction.user.id);
                         const embed = new EmbedBuilder()
                             .setTitle("Ticket Already Open")
                             .setDescription("You already have an open ticket. Please use it or ask staff to close it before opening a new one.")
@@ -73,6 +93,7 @@ async function createTicket(interaction, category, bot) {
                         console.error('Error creating ticket channel:', e);
                         await safeReply(interaction, { content: MSG.GENERIC_ERROR, flags: MessageFlags.Ephemeral });
                     }
+                    creatingTickets.delete(interaction.user.id);
                     resolve();
                 }
             );
@@ -182,16 +203,29 @@ async function closeTicketChannel(channel, closer, bot) {
                             if (batch.size < 100) break;
                         }
                         allMessages.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
-                        const lines = allMessages.map(message => {
-                            const attachments = message.attachments.size > 0
-                                ? ` [${message.attachments.size} attachment(s)]`
-                                : '';
-                            return `${message.author?.username ?? 'Unknown'} (${message.author?.id ?? 'N/A'}) - ${message.createdAt}: ${message.content}${attachments}`;
-                        });
+                        const lines = allMessages
+                            .filter(m => {
+                                // Skip bot messages with no text content — they produce
+                                // meaningless blank lines (embed-only welcome/close embeds).
+                                if (m.author?.bot && !m.content && m.attachments.size === 0) return false;
+                                return true;
+                            })
+                            .map(message => {
+                                const attachments = message.attachments.size > 0
+                                    ? ` [${message.attachments.size} attachment(s)]`
+                                    : '';
+                                return `${message.author?.username ?? 'Unknown'} (${message.author?.id ?? 'N/A'}) - ${message.createdAt}: ${message.content || ''}${attachments}`;
+                            });
                         transcript = lines.join('\n');
                     } catch (error) {
                         console.error('Error fetching messages for transcript:', error);
                     }
+
+                    // Discord upload limit for non-boosted servers is 8 MB.
+                    // If the transcript is larger, send just the embed and note the oversize.
+                    const DISCORD_UPLOAD_LIMIT = 8 * 1024 * 1024;
+                    const transcriptBuffer = transcript.trim() ? Buffer.from(transcript, 'utf-8') : null;
+                    const transcriptTooBig = transcriptBuffer && transcriptBuffer.length > DISCORD_UPLOAD_LIMIT;
 
                     try {
                         const transcriptChannel = await fetchChannel(bot, bot.CONFIG.TRANSCRIPT_CHANNEL);
@@ -207,15 +241,16 @@ async function closeTicketChannel(channel, closer, bot) {
                                     { name: "Ticket ID",   value: `#${ticket.id}`, inline: true }
                                 );
 
-                            const files = [];
-                            if (transcript.trim()) {
-                                files.push({
-                                    attachment: Buffer.from(transcript, 'utf-8'),
-                                    name: `transcript-${ticket.id}.txt`
-                                });
+                            if (transcriptTooBig) {
+                                embed.addFields({ name: "Transcript", value: "Transcript exceeded 8 MB upload limit and was not attached.", inline: false });
                             }
 
-                            await transcriptChannel.send({ embeds: [embed], files: files });
+                            const files = [];
+                            if (transcriptBuffer && !transcriptTooBig) {
+                                files.push({ attachment: transcriptBuffer, name: `transcript-${ticket.id}.txt` });
+                            }
+
+                            await transcriptChannel.send({ embeds: [embed], files });
                         }
                     } catch (error) {
                         console.error('Error sending transcript:', error);
@@ -234,11 +269,8 @@ async function closeTicketChannel(channel, closer, bot) {
                             );
 
                         const dmFiles = [];
-                        if (transcript.trim()) {
-                            dmFiles.push({
-                                attachment: Buffer.from(transcript, 'utf-8'),
-                                name: `transcript-${ticket.id}.txt`
-                            });
+                        if (transcriptBuffer && !transcriptTooBig) {
+                            dmFiles.push({ attachment: transcriptBuffer, name: `transcript-${ticket.id}.txt` });
                         }
 
                         await user.send({ embeds: [dmEmbed], files: dmFiles });
