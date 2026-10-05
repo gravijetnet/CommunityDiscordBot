@@ -137,3 +137,18 @@ dist
 # Vite logs files
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+**/node_modules/
+!.env.sample
+!.env.template
+!**/.env.example
+!**/.env.sample
+!**/.env.template
+.claude/
+.codex/
+*.jks
+*.keystore
+key.properties
+google-services.json
+firebase-service-account.json
+auth_cache/
